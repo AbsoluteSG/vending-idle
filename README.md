@@ -3,9 +3,10 @@
 An idle/clicker prototype where the play surface is a vending machine's stock grid.
 C# + MonoGame, no engine.
 
-The cabinet stands in a room, lit from behind, casting a shadow on the floor. Its
-drinks hang free in their compartments as individual rectangles -- placeholders for
-drink sprites -- and vending drops one out of the row so it tumbles down into the
+The cabinet stands in a room, lit from behind, casting a shadow on the floor. Each
+compartment shows one drink -- a rectangle standing in for a drink sprite -- with a
+stacked deck of silhouettes behind it as a fullness cue and the exact count printed
+underneath. Vending drops that drink out of its slot so it tumbles down into the
 delivery tray and settles there. The till readout is an LED panel on the machine's
 own fascia rather than a HUD, and RESTOCK and SAVE are buttons on its service column
 beside the keypad.
@@ -101,8 +102,10 @@ that is far less to keep in sync. Drawers are drawn (and hit-tested) before the
 machine, so a click on one can never fall through to the vend tray behind it.
 
 There are no art assets. The room, the cabinet and every drink are drawn from
-textures generated at startup (`Render/Primitives.cs`) -- each drink is a plain
-rectangle sized and positioned exactly where its sprite will go. The content pipeline is wired up and builds the three
+textures generated at startup (`Render/Primitives.cs`). A compartment's drink is a
+plain rectangle sized and positioned exactly where its sprite will go, so dropping
+real art in is a matter of blitting a texture into `DrinkDisplay.Front` instead of
+calling `DrawDrink`. The content pipeline is wired up and builds the three
 SpriteFonts from a bundled DejaVu Sans, so real sprites can be dropped in through
 the normal MonoGame workflow whenever you want them.
 

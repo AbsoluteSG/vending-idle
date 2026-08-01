@@ -19,23 +19,23 @@ public struct MachineAction
 }
 
 /// <summary>
-/// A drink hanging in a compartment. Each one is a placeholder rectangle standing
-/// in for a future drink sprite.
+/// A compartment holds one drink, not a row of them. <see cref="Front"/> is the
+/// placeholder rectangle a drink sprite will occupy; <see cref="StackLayers"/> is
+/// how many silhouettes sit behind it, a stacked-deck cue for how full the slot is.
+/// The exact figure is the printed number, not something you count.
 /// </summary>
-public readonly struct HangingRack
+public readonly struct DrinkDisplay
 {
-    public Rectangle First { get; init; }
-    public int Stride { get; init; }
-    public int Positions { get; init; }
-    public int Occupied { get; init; }
+    public Rectangle Front { get; init; }
+    public int StackLayers { get; init; }
 
-    public Rectangle At(int index) =>
-        index < 0 || index >= Positions
-            ? Rectangle.Empty
-            : new Rectangle(First.X + index * Stride, First.Y, First.Width, First.Height);
+    /// <summary>Each layer sits up and back from the one in front of it.</summary>
+    public static readonly Point LayerOffset = new(4, -4);
 
-    /// <summary>The next one to drop: the front of the row.</summary>
-    public Rectangle Front => Occupied <= 0 ? Rectangle.Empty : At(Occupied - 1);
+    public Rectangle Layer(int depth) =>
+        new(Front.X + LayerOffset.X * depth,
+            Front.Y + LayerOffset.Y * depth,
+            Front.Width, Front.Height);
 }
 
 /// <summary>
@@ -53,11 +53,11 @@ public sealed class MachineView
     private const int Gap = 6;
 
     private const int CellPad = 7;
-    private const int CellHeight = 84;
+    private const int CellHeight = 96;
 
-    private const int BottleWidth = 16;
-    private const int BottleHeight = 38;
-    private const int BottleGap = 5;
+    private const int DrinkWidth = 28;
+    private const int DrinkHeight = 52;
+    private const int MaxStackLayers = 4;
 
     public int SelectedSlot { get; set; }
     public float Scroll { get; private set; }
@@ -65,7 +65,7 @@ public sealed class MachineView
     private Rectangle _glass;
     private Rectangle _tray;
     private readonly Dictionary<int, Rectangle> _cellRects = new();
-    private readonly Dictionary<int, HangingRack> _racks = new();
+    private readonly Dictionary<int, DrinkDisplay> _displays = new();
 
     public Rectangle TrayRect => _tray;
     public Rectangle GlassRect => _glass;
@@ -77,29 +77,15 @@ public sealed class MachineView
         _cellRects.TryGetValue(index, out rect);
 
     /// <summary>
-    /// Where the nth drink hangs, so a dispensed one can start falling from
-    /// exactly the hook it was on.
-    /// </summary>
-    public bool TryGetBottleRect(int slotIndex, int position, out Rectangle rect)
-    {
-        rect = Rectangle.Empty;
-        if (!_racks.TryGetValue(slotIndex, out var rack)) return false;
-
-        rect = rack.At(position);
-        return rect != Rectangle.Empty;
-    }
-
-    /// <summary>
-    /// Where the nth drink dispensed this click was hanging, counting back from
-    /// the front of the row. Dispensing reads from the front rather than by stock
-    /// index because a row shows proportional fill, not one hook per bottle.
+    /// Where the nth drink dispensed this click was sitting. A double drop takes
+    /// the front drink and the one stacked behind it.
     /// </summary>
     public bool TryGetDispensedBottle(int slotIndex, int nth, out Rectangle rect)
     {
         rect = Rectangle.Empty;
-        if (!_racks.TryGetValue(slotIndex, out var rack)) return false;
+        if (!_displays.TryGetValue(slotIndex, out var display)) return false;
 
-        rect = rack.At(rack.Occupied - 1 - nth);
+        rect = display.Layer(Math.Min(nth, display.StackLayers));
         return rect != Rectangle.Empty;
     }
 
@@ -215,7 +201,7 @@ public sealed class MachineView
         var cellWidth = (_glass.Width - CellPad * (columns + 1)) / columns;
 
         _cellRects.Clear();
-        _racks.Clear();
+        _displays.Clear();
         ui.PushClip(_glass);
 
         var mouseInGlass = _glass.Contains(ui.Mouse);
@@ -261,35 +247,28 @@ public sealed class MachineView
     }
 
     /// <summary>
-    /// Lays out the row of drinks hanging in a compartment. Up to capacity, one
-    /// rectangle really is one bottle; past that the row shows proportional fill,
-    /// because no compartment can legibly hang ninety of them.
+    /// Places the single drink a compartment shows, and decides how deep the
+    /// stack behind it looks. The stack is a fullness cue only -- it saturates
+    /// well before capacity does, because the number carries the real figure.
     /// </summary>
-    private static HangingRack ComputeRack(Rectangle cell, int stock, int capacity)
+    private static DrinkDisplay ComputeDisplay(Rectangle cell, int stock, int capacity)
     {
-        var innerWidth = cell.Width - 10;
-        var stride = BottleWidth + BottleGap;
-        var positions = Math.Max(1, (innerWidth + BottleGap) / stride);
-
-        if (capacity > 0) positions = Math.Min(positions, capacity);
-
-        var occupied = capacity <= 0
-            ? 0
-            : (int)Math.Round(stock / (double)capacity * positions);
-
-        if (stock > 0 && occupied == 0) occupied = 1;
-        occupied = Math.Min(occupied, positions);
-
-        var used = positions * stride - BottleGap;
-        var startX = cell.X + (cell.Width - used) / 2;
-
-        return new HangingRack
+        var layers = 0;
+        if (stock > 1 && capacity > 0)
         {
-            First = new Rectangle(startX, cell.Y + 12, BottleWidth, BottleHeight),
-            Stride = stride,
-            Positions = positions,
-            Occupied = occupied
-        };
+            var fill = stock / (double)capacity;
+            layers = Math.Min(MaxStackLayers, (int)Math.Ceiling(fill * MaxStackLayers));
+            layers = Math.Min(layers, stock - 1);
+        }
+
+        // Sit the front drink low enough that the stack has room to rise behind it.
+        var stackRise = MaxStackLayers * -DrinkDisplay.LayerOffset.Y;
+        var front = new Rectangle(
+            cell.Center.X - DrinkWidth / 2 - MaxStackLayers * DrinkDisplay.LayerOffset.X / 2,
+            cell.Y + stackRise - 2,
+            DrinkWidth, DrinkHeight);
+
+        return new DrinkDisplay { Front = front, StackLayers = layers };
     }
 
     private void DrawCompartment(Ui ui, GameState state, Slot slot, Rectangle cell,
@@ -351,29 +330,36 @@ public sealed class MachineView
         else
         {
             var capacity = state.SlotCapacity;
-            var rack = ComputeRack(cell, slot.Stock, capacity);
-            _racks[slot.Index] = rack;
+            var display = ComputeDisplay(cell, slot.Stock, capacity);
+            _displays[slot.Index] = display;
 
             var color = Theme.FromPacked(drink.Color);
 
-            // The dispensing coil the drinks hang from.
-            ui.P.Fill(ui.Sb, new Rectangle(rack.First.X - 3, cell.Y + 8,
-                                           rack.Positions * rack.Stride - BottleGap + 6, 2),
-                      Theme.Shelf);
+            if (slot.Stock > 0)
+            {
+                // Stack behind the drink first, back to front, each layer sunk
+                // further toward the colour of the unlit cabinet interior.
+                for (var depth = display.StackLayers; depth >= 1; depth--)
+                {
+                    var shade = 0.30f + 0.14f * depth;
+                    DrawStackLayer(ui, display.Layer(depth),
+                                   Color.Lerp(color, Theme.Glass, shade));
+                }
 
-            for (var i = 0; i < rack.Occupied; i++)
-                DrawBottle(ui, rack.At(i), color);
+                DrawDrink(ui, display.Front, color);
+            }
 
-            var label = slot.Stock == 0 ? "sold out" : $"{slot.Stock}/{capacity}";
+            var label = slot.Stock == 0 ? "sold out" : slot.Stock.ToString();
 
             ui.T.DrawIn(ui.Sb, label,
-                new Rectangle(cell.X, cell.Bottom - 22, cell.Width, 14),
-                slot.Stock == 0 ? Theme.Negative : Color.Lerp(color, Color.White, 0.4f),
-                FontSize.Small, Align.Center);
+                new Rectangle(cell.X, cell.Bottom - 24, cell.Width, 18),
+                slot.Stock == 0 ? Theme.Negative : Color.Lerp(color, Color.White, 0.5f),
+                slot.Stock == 0 ? FontSize.Small : FontSize.Normal, Align.Center);
 
             if (hovered)
                 ui.SetTooltip(
-                    $"{drink.Name} - {Money.Cash(drink.Value * state.ClickValueMultiplier)} each",
+                    $"{drink.Name} - {slot.Stock}/{capacity} in stock, " +
+                    $"{Money.Cash(drink.Value * state.ClickValueMultiplier)} each",
                     cell);
         }
 
@@ -392,26 +378,42 @@ public sealed class MachineView
     }
 
     /// <summary>
-    /// One drink. A plain rectangle standing in for a sprite, with a cap and a
-    /// label band so it reads as a bottle rather than a swatch.
+    /// The drink itself: the rectangle a sprite will eventually occupy, dressed
+    /// with a cap, a label band and a highlight so it reads as product rather
+    /// than a colour swatch.
     /// </summary>
-    private static void DrawBottle(Ui ui, Rectangle rect, Color color)
+    private static void DrawDrink(Ui ui, Rectangle rect, Color color)
     {
         if (rect.Width <= 0) return;
 
-        var capWidth = Math.Max(4, rect.Width / 2);
-        var cap = new Rectangle(rect.Center.X - capWidth / 2, rect.Y, capWidth, 4);
-        ui.P.Fill(ui.Sb, cap, Color.Lerp(color, Color.White, 0.55f));
+        var capWidth = Math.Max(6, rect.Width / 3);
+        var cap = new Rectangle(rect.Center.X - capWidth / 2, rect.Y, capWidth, 5);
+        ui.P.FillRounded(ui.Sb, cap, 2, Color.Lerp(color, Color.White, 0.55f));
 
-        var body = new Rectangle(rect.X, rect.Y + 4, rect.Width, rect.Height - 4);
-        ui.P.FillRounded(ui.Sb, body, 3, color);
+        var body = new Rectangle(rect.X, rect.Y + 5, rect.Width, rect.Height - 5);
+        ui.P.FillRounded(ui.Sb, body, 4, color);
 
-        // Label band and a highlight down one side.
-        ui.P.Fill(ui.Sb, new Rectangle(body.X, body.Y + body.Height / 3, body.Width, body.Height / 3),
-                  Color.Lerp(color, Color.Black, 0.28f));
+        ui.P.Fill(ui.Sb,
+            new Rectangle(body.X, body.Y + body.Height / 3, body.Width, body.Height / 3),
+            Color.Lerp(color, Color.Black, 0.30f));
 
-        ui.P.Fill(ui.Sb, new Rectangle(body.X + 2, body.Y + 3, 2, body.Height - 8),
-                  Color.Lerp(color, Color.White, 0.35f));
+        ui.P.Fill(ui.Sb, new Rectangle(body.X + 3, body.Y + 4, 3, body.Height - 10),
+                  Color.Lerp(color, Color.White, 0.40f));
+
+        ui.P.OutlineRounded(ui.Sb, body, 4, Color.Lerp(color, Color.Black, 0.45f));
+    }
+
+    /// <summary>
+    /// One of the drinks stacked behind the front one. Only its silhouette shows,
+    /// so the stack reads as depth without competing with the drink in front.
+    /// </summary>
+    private static void DrawStackLayer(Ui ui, Rectangle rect, Color color)
+    {
+        if (rect.Width <= 0) return;
+
+        var body = new Rectangle(rect.X, rect.Y + 5, rect.Width, rect.Height - 5);
+        ui.P.FillRounded(ui.Sb, body, 4, color);
+        ui.P.OutlineRounded(ui.Sb, body, 4, Color.Lerp(color, Color.Black, 0.35f));
     }
 
     // ---------------------------------------------------------------------
