@@ -31,6 +31,26 @@ dotnet tool restore          # installs dotnet-mgcb from .config/dotnet-tools.js
 dotnet run --project src/VendingIdle
 ```
 
+Runs on Windows, macOS and Linux off the same checkout — MonoGame's DesktopGL
+backend, no per-platform project.
+
+### macOS
+
+Apple Silicon is supported natively, Rosetta not required. SDL2, OpenAL and the
+freetype the content pipeline needs for SpriteFonts all ship as universal binaries
+with an arm64 slice.
+
+```bash
+brew install --cask dotnet-sdk      # or download the arm64 .NET 8 SDK installer
+git clone https://github.com/AbsoluteSG/AbsoluteSG.git
+cd AbsoluteSG/vending-idle
+dotnet tool restore
+dotnet run --project src/VendingIdle
+```
+
+Nothing needs to come from Homebrew beyond the SDK; the native libraries arrive
+through NuGet.
+
 The economy has a headless test suite that needs no window or GPU:
 
 ```bash
@@ -51,9 +71,15 @@ dotnet run --project tools/VendingIdle.SimTest -- --curve  # progression report
 | `R` | Restock everything |
 | `S` | Save |
 
-Progress saves to `%LOCALAPPDATA%/VendingIdle/save.json` (`~/.local/share` on
-Linux) every 15 seconds and on exit. Time away is simulated on load, capped at 8
-hours.
+Progress saves every 15 seconds and on exit, to whichever your platform expects:
+
+| Platform | Save location |
+|---|---|
+| Windows | `%LOCALAPPDATA%\VendingIdle\save.json` |
+| macOS | `~/Library/Application Support/VendingIdle/save.json` |
+| Linux | `~/.local/share/VendingIdle/save.json` |
+
+Time away is simulated on load, capped at 8 hours.
 
 ### Command-line flags
 
