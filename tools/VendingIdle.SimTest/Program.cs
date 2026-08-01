@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Collections.Generic;
 using VendingIdle.Core;
 
 namespace VendingIdle.SimTest;
@@ -39,6 +40,16 @@ public static class Program
         SaveRoundTripsExactly();
         CostCurvesAreMonotonic();
         CorruptSaveDoesNotThrow();
+        TokensAccrueAndCratesOpen();
+        RevealMustBeRedeemed();
+        DuplicatesRaiseLevelToCap();
+        RarityWeightsHold();
+        AurasRequireStock();
+        AuraCapsHold();
+        ChainNeverRecurses();
+        BottomlessPreservesStock();
+        CourierRefillsDrySlots();
+        OfflineMatchesLiveWithEffects();
         ProgressionDoesNotStall();
 
         Console.WriteLine($"\n{_passed} passed, {_failed} failed");
@@ -298,6 +309,10 @@ public static class Program
             original.RestockToFull(original.Slots[0]);
             original.Slots[0].HasAutoRestocker = true;
             original.DispenseCursor = 1;
+            original.Tokens = 777;
+            original.PacksOpened = 4;
+            original.DrinkCopies["chain_fizz"] = 3;
+            original.PendingRevealId = "static_shock";
 
             SaveSystem.Save(original, path);
             var loaded = SaveSystem.Load(path);
@@ -314,6 +329,9 @@ public static class Program
             Check("purchased slots survive", loaded.Slots[1].Unlocked);
             Check("dispense cursor survives", loaded.DispenseCursor == original.DispenseCursor);
             Check("stats survive", loaded.TotalCansSold == 4242 && loaded.TotalCrits == 17);
+            Check("tokens survive", loaded.Tokens == 777 && loaded.PacksOpened == 4);
+            Check("drink copies survive", loaded.CopiesOf("chain_fizz") == 3);
+            Check("a pending reveal survives", loaded.PendingRevealId == "static_shock");
         }
         finally
         {
@@ -364,6 +382,22 @@ public static class Program
                       repaired.UpgradeLevels.Length == UpgradeDatabase.Count);
                 Check("a starter slot is restored", repaired.SlotsOwned >= 1);
             }
+
+            // A v1 save has no crate fields at all; defaulting to empty IS the migration.
+            File.WriteAllText(path,
+                "{\"Version\":1,\"Money\":500,\"TotalEarned\":500," +
+                "\"Slots\":[{\"Index\":0,\"Unlocked\":true,\"DrinkId\":\"fizzy_water\",\"Stock\":5}]," +
+                "\"UpgradeLevels\":[0,0,0,0,0,0,0]}");
+            var v1 = SaveSystem.Load(path);
+            Check("a v1 save loads", v1 is not null);
+            if (v1 is not null)
+            {
+                Check("v1 migrates to empty crate state",
+                      v1.Tokens == 0 && v1.PacksOpened == 0 &&
+                      v1.DrinkCopies.Count == 0 && v1.PendingRevealId is null);
+                Check("v1 save is stamped to the current version",
+                      v1.Version == GameState.CurrentVersion);
+            }
         }
         finally
         {
@@ -399,7 +433,7 @@ public static class Program
 
             Simulation.Step(state, 1.0, rng);
 
-            BuyGreedily(state);
+            BuyGreedily(state, rng);
             state.RestockAll();
         }
 
@@ -427,7 +461,7 @@ public static class Program
         for (var second = 0.0; second < 30 * 60; second += 1.0)
         {
             Simulation.Step(state, 1.0, rng);
-            BuyGreedily(state);
+            BuyGreedily(state, rng);
             state.RestockAll();
         }
 
@@ -446,7 +480,7 @@ public static class Program
 
         Console.WriteLine("Vending Idle -- progression curve (greedy player, taps for 5 min)\n");
         Console.WriteLine($"{"time",8} {"earned",14} {"cash",12} {"slots",6} {"cust",5} " +
-                          $"{"drinks",7} {"income/s",11} {"stock",7} {"levels",22}");
+                          $"{"drinks",7} {"income/s",11} {"stock",7} {"tokens",8} {"crates",7} {"owned",6}");
 
         var clickCarry = 0.0;
         var checkpoints = new[] { 60.0, 300.0, 900.0, 1800.0, 3600.0, 7200.0, 14400.0, 28800.0, 86400.0 };
@@ -465,28 +499,52 @@ public static class Program
             }
 
             Simulation.Step(state, 1.0, rng);
-            BuyGreedily(state);
+            BuyGreedily(state, rng);
             state.RestockAll();
 
             if (next < checkpoints.Length && second >= checkpoints[next])
             {
-                var levels = string.Join(",", state.UpgradeLevels);
                 Console.WriteLine(
                     $"{Money.FormatDuration(second),8} {Money.Cash(state.TotalEarned),14} " +
                     $"{Money.Cash(state.Money),12} {state.SlotsOwned,6} {state.Customers,5} " +
                     $"{DrinkDatabase.UnlockedFor(state).Count(),7} " +
                     $"{Money.FormatRate(Simulation.PotentialIncomePerSecond(state)),11} " +
-                    $"{state.TotalStock,7} {levels,22}");
+                    $"{state.TotalStock,7} {state.Tokens,8} {state.PacksOpened,7} " +
+                    $"{state.DrinkCopies.Count,6}");
                 next++;
             }
         }
     }
 
     /// <summary>Spends spare money on whatever is affordable, cheapest thing first.</summary>
-    private static void BuyGreedily(GameState state)
+    private static void BuyGreedily(GameState state, Random rng)
     {
         // Keep a buffer so the policy never spends the money it needs for restocks.
         const double reserveFactor = 3.0;
+
+        // Crates cost tokens, not money, so open and redeem whenever possible.
+        if (state.CanOpenPack) state.TryOpenPack(rng);
+        state.RedeemReveal();
+
+        // Keep up to three slots running distinct effect drinks, so the curve
+        // report exercises auras and procs rather than ignoring them.
+        var packSlots = state.Slots.Count(s2 =>
+            s2.Unlocked && s2.Drink is { Source: DrinkSource.Pack });
+
+        if (packSlots < 3)
+        {
+            foreach (var drink in DrinkDatabase.PackDrinks)
+            {
+                if (packSlots >= 3) break;
+                if (state.CopiesOf(drink.Id) < 1) continue;
+                if (state.Slots.Any(s2 => s2.DrinkId == drink.Id)) continue;
+
+                var bare = state.Slots.FirstOrDefault(s2 => s2.Unlocked && s2.DrinkId is null);
+                if (bare is null) break;
+
+                if (state.TryAssignDrink(bare.Index, drink.Id)) packSlots++;
+            }
+        }
 
         foreach (var slot in state.Slots)
         {
@@ -520,6 +578,292 @@ public static class Program
         if (cheapest is not null &&
             state.Money > cheapest.CostAt(state.UpgradeLevel(cheapest.Id)) * reserveFactor)
             state.TryBuyUpgrade(cheapest.Id);
+    }
+
+    // ---------------------------------------------------------------------
+    // Supply crates and effect drinks
+    // ---------------------------------------------------------------------
+
+    private static void TokensAccrueAndCratesOpen()
+    {
+        var state = GameState.NewGame();
+        var rng = new Random(21);
+
+        state.Money = 10_000.0;
+        state.RestockToFull(state.Slots[0]);
+
+        var sold = 0L;
+        for (var i = 0; i < 8; i++)
+        {
+            var r = Simulation.Click(state, rng);
+            sold += r.Cans;
+        }
+
+        Check("bottles sold earn crate tokens", state.Tokens >= sold);
+
+        state.Tokens = 1_000;
+        var cost = (long)Math.Ceiling(state.NextPackCost);
+        var rolled = state.TryOpenPack(rng);
+
+        Check("opening a crate rolls a pack drink",
+              rolled is not null && DrinkDatabase.Get(rolled)?.Source == DrinkSource.Pack);
+        Check("opening deducts the token price", state.Tokens == 1_000 - cost);
+        Check("crate price rises after opening", state.NextPackCost > cost);
+    }
+
+    private static void RevealMustBeRedeemed()
+    {
+        var state = GameState.NewGame();
+        var rng = new Random(22);
+
+        state.Tokens = 100_000;
+        var rolled = state.TryOpenPack(rng)!;
+
+        Check("the rolled drink is pending, not granted",
+              state.PendingRevealId == rolled && state.CopiesOf(rolled) == 0);
+        Check("a pending reveal blocks the crate",
+              !state.CanOpenPack && state.TryOpenPack(rng) is null);
+        Check("a pending pack drink is still locked",
+              !DrinkDatabase.IsUnlocked(DrinkDatabase.Get(rolled)!, state));
+
+        var redeem = state.RedeemReveal();
+
+        Check("redeeming grants the copy",
+              redeem is not null && redeem.WasNew && state.CopiesOf(rolled) == 1);
+        Check("redeeming unblocks the crate",
+              state.PendingRevealId is null && state.CanOpenPack);
+        Check("redeeming twice does nothing", state.RedeemReveal() is null);
+        Check("an owned pack drink is unlocked",
+              DrinkDatabase.IsUnlocked(DrinkDatabase.Get(rolled)!, state));
+    }
+
+    private static void DuplicatesRaiseLevelToCap()
+    {
+        var state = GameState.NewGame();
+        var ok = true;
+
+        for (var copy = 1; copy <= Balance.EffectLevelMax + 3; copy++)
+        {
+            state.PendingRevealId = "chain_fizz";
+            var redeem = state.RedeemReveal()!;
+
+            var expectedLevel = Math.Min(copy, Balance.EffectLevelMax);
+            if (redeem.Level != expectedLevel) ok = false;
+            if (redeem.WasNew != (copy == 1)) ok = false;
+            if (redeem.AtMax != (copy > Balance.EffectLevelMax)) ok = false;
+        }
+
+        Check("duplicates raise the effect level and stop at the cap", ok);
+        Check("effect level reads back capped",
+              state.EffectLevelOf(DrinkDatabase.Get("chain_fizz")!) == Balance.EffectLevelMax);
+    }
+
+    private static void RarityWeightsHold()
+    {
+        var rng = new Random(23);
+        var byRarity = new Dictionary<Rarity, int>();
+
+        const int rolls = 20_000;
+        for (var i = 0; i < rolls; i++)
+        {
+            var drink = PackSystem.Roll(rng);
+            byRarity[drink.Rarity] = byRarity.GetValueOrDefault(drink.Rarity) + 1;
+        }
+
+        double Share(Rarity r) => byRarity.GetValueOrDefault(r) / (double)rolls;
+        double Expected(Rarity r) =>
+            DrinkDatabase.PackDrinks.Where(d => d.Rarity == r).Sum(d => PackSystem.Weight(d.Rarity))
+            / (double)PackSystem.TotalWeight;
+
+        var ok = new[] { Rarity.Common, Rarity.Uncommon, Rarity.Rare }
+            .All(r => Math.Abs(Share(r) - Expected(r)) < 0.03);
+
+        Check("rarity weights hold over 20k rolls", ok);
+    }
+
+    /// <summary>Grants copies and loads the drink into the given slot, stocked.</summary>
+    private static void LoadPackDrink(GameState state, int slotIndex, string drinkId, int copies)
+    {
+        state.DrinkCopies[drinkId] = copies;
+        state.EnsureRow(slotIndex / Balance.Columns);
+        state.Slots[slotIndex].Unlocked = true;
+        state.TryAssignDrink(slotIndex, drinkId);
+        state.RestockToFull(state.Slots[slotIndex]);
+    }
+
+    private static void AurasRequireStock()
+    {
+        var state = GameState.NewGame();
+        state.Money = 1_000_000.0;
+
+        var baseCrit = state.CritChance;
+        LoadPackDrink(state, 1, "static_shock", 3);
+
+        Check("a stocked aura slot raises crit chance", state.CritChance > baseCrit);
+
+        state.Slots[1].Stock = 0;
+        Check("a dry aura slot contributes nothing",
+              Math.Abs(state.CritChance - baseCrit) < 1e-12);
+
+        // Loading the same aura drink twice must not stack it.
+        state.RestockToFull(state.Slots[1]);
+        var single = state.CritChance;
+        LoadPackDrink(state, 2, "static_shock", 3);
+        Check("duplicate slots of one aura drink do not stack",
+              Math.Abs(state.CritChance - single) < 1e-12);
+    }
+
+    private static void AuraCapsHold()
+    {
+        var state = GameState.NewGame();
+        state.Money = 100_000_000.0;
+
+        state.UpgradeLevels[(int)UpgradeId.CritChance] = 29;        // maxed
+        state.UpgradeLevels[(int)UpgradeId.CustomerSpeed] = 20;     // maxed
+        state.UpgradeLevels[(int)UpgradeId.RestockDiscount] = 34;   // maxed
+
+        LoadPackDrink(state, 1, "static_shock", Balance.EffectLevelMax);
+        LoadPackDrink(state, 2, "loyalty_lager", Balance.EffectLevelMax);
+        LoadPackDrink(state, 3, "bulk_bottle", Balance.EffectLevelMax);
+
+        Check("crit chance never passes its cap",
+              state.CritChance <= Balance.CritChanceMax + 1e-12);
+        Check("customer interval never passes its floor",
+              state.CustomerInterval >= Balance.CustomerIntervalMin - 1e-12);
+        Check("restock discount never passes its floor",
+              state.RestockDiscount >= Balance.RestockDiscountMin - 1e-12);
+    }
+
+    private static void ChainNeverRecurses()
+    {
+        var state = GameState.NewGame();
+        var rng = new Random(24);
+        state.Money = 100_000_000.0;
+
+        // Two adjacent Chain Fizz slots at max level: the worst case for a
+        // chain proc that could trigger another chain proc.
+        LoadPackDrink(state, 0, "chain_fizz", Balance.EffectLevelMax);
+        LoadPackDrink(state, 1, "chain_fizz", Balance.EffectLevelMax);
+
+        var ok = true;
+        var sawChain = false;
+
+        for (var i = 0; i < 2_000; i++)
+        {
+            state.Slots[0].Stock = state.SlotCapacity;
+            state.Slots[1].Stock = state.SlotCapacity;
+
+            var before = state.TotalStock;
+            var result = Simulation.Click(state, rng);
+            var consumed = before - state.TotalStock;
+
+            if (result.Chain is not null) sawChain = true;
+
+            // Primary can take at most 2 (crit), a chain exactly 1 more. Any
+            // deeper recursion would consume 4+.
+            if (consumed > 3) ok = false;
+        }
+
+        Check("chain procs actually fire", sawChain);
+        Check("a chain never recurses past depth 1", ok);
+    }
+
+    private static void BottomlessPreservesStock()
+    {
+        var state = GameState.NewGame();
+        var rng = new Random(25);
+        state.Money = 100_000_000.0;
+
+        LoadPackDrink(state, 0, "bottomless_cup", Balance.EffectLevelMax);
+
+        var sold = 0L;
+        var consumed = 0;
+
+        for (var i = 0; i < 600; i++)
+        {
+            state.Slots[0].Stock = state.SlotCapacity;
+            var before = state.Slots[0].Stock;
+            var result = Simulation.Click(state, rng);
+            sold += result.Cans;
+            consumed += before - state.Slots[0].Stock;
+
+            if (result.Preserved && before != state.Slots[0].Stock)
+                Check("a preserved dispense left the shelf untouched", false);
+        }
+
+        Check("Bottomless Cup sells more bottles than it consumes", consumed < sold);
+    }
+
+    private static void CourierRefillsDrySlots()
+    {
+        var state = GameState.NewGame();
+        var rng = new Random(26);
+        state.Money = 100_000_000.0;
+
+        LoadPackDrink(state, 0, "courier_cola", Balance.EffectLevelMax);
+
+        // A second loaded slot that is bone dry: the only legal courier target.
+        state.Slots[1].Unlocked = true;
+        state.TryAssignDrink(1, "fizzy_water");
+        state.Slots[1].Stock = 0;
+
+        var refills = 0;
+        for (var i = 0; i < 1_500; i++)
+        {
+            state.Slots[0].Stock = state.SlotCapacity;
+            state.Slots[1].Stock = 0;
+
+            var result = Simulation.Click(state, rng);
+            if (result.CourierSlotIndex == 1 && state.Slots[1].Stock == 1)
+                refills++;
+        }
+
+        Check("Courier Cola drops free bottles into dry slots", refills > 0);
+
+        // With nothing dry, the proc must find no target.
+        state.RestockAll();
+        var refillsWhenFull = 0;
+        for (var i = 0; i < 500; i++)
+        {
+            state.Slots[0].Stock = state.SlotCapacity;
+            state.Slots[1].Stock = state.SlotCapacity;
+            if (Simulation.Click(state, rng).CourierSlotIndex >= 0) refillsWhenFull++;
+        }
+
+        Check("Courier Cola refuses slots that still have stock", refillsWhenFull == 0);
+    }
+
+    private static void OfflineMatchesLiveWithEffects()
+    {
+        GameState Build()
+        {
+            var s = GameState.NewGame();
+            s.Money = 500_000.0;
+            s.UpgradeLevels[(int)UpgradeId.Customers] = 6;
+
+            LoadPackDrink(s, 1, "chain_fizz", Balance.EffectLevelMax);
+            LoadPackDrink(s, 2, "bottomless_cup", Balance.EffectLevelMax);
+            LoadPackDrink(s, 3, "static_shock", Balance.EffectLevelMax);
+            s.RestockToFull(s.Slots[0]);
+
+            foreach (var slot in s.Slots)
+                if (slot.Unlocked)
+                    slot.HasAutoRestocker = true;
+
+            return s;
+        }
+
+        var live = Build();
+        var liveStart = live.Money;
+        StepFor(live, 3600.0, new Random(27));
+        var liveEarned = live.Money - liveStart;
+
+        var offline = Build();
+        var report = Simulation.RunOffline(offline, 3600.0, new Random(27));
+
+        var ratio = report.Earned / liveEarned;
+        Check($"offline with a full effect loadout is within 20% of live (ratio {ratio:0.###})",
+              ratio is > 0.8 and < 1.2);
     }
 
     // ---------------------------------------------------------------------

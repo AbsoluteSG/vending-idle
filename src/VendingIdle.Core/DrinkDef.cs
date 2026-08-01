@@ -11,6 +11,16 @@ public enum Rarity
     Legendary
 }
 
+/// <summary>How a drink is obtained.</summary>
+public enum DrinkSource
+{
+    /// <summary>Unlocked by lifetime earnings; pure value, no effects.</summary>
+    Purchase,
+
+    /// <summary>Found in supply crates; carries an effect, priced below its value tier.</summary>
+    Pack
+}
+
 /// <summary>
 /// A drink you can load into a slot. Immutable definition -- per-save progress
 /// (which drinks are unlocked) lives on <see cref="GameState"/>.
@@ -50,11 +60,13 @@ public sealed class DrinkDef
     private double StepRatio(int capacity) =>
         capacity <= 0 ? 1.0 : Math.Pow(RestockGrowth, ScalingSteps / (double)capacity);
 
-    /// <summary>Lifetime earnings needed before this drink can be loaded.</summary>
+    /// <summary>Lifetime earnings needed before this drink can be loaded. Purchase drinks only.</summary>
     public double UnlockAtEarned { get; init; }
 
-    /// <summary>Reserved for the pack/duplicate system that is out of scope for v1.</summary>
-    public string? EffectId { get; init; }
+    public DrinkSource Source { get; init; } = DrinkSource.Purchase;
+
+    /// <summary>The pack drink's effect. Null for purchase drinks -- they are pure value.</summary>
+    public EffectKind? Effect { get; init; }
 
     /// <summary>Cost of one unit when the slot currently holds <paramref name="currentStock"/>.</summary>
     public double UnitCostAt(int currentStock, int capacity) =>

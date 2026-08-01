@@ -382,7 +382,7 @@ public sealed class MachineView
     /// with a cap, a label band and a highlight so it reads as product rather
     /// than a colour swatch.
     /// </summary>
-    private static void DrawDrink(Ui ui, Rectangle rect, Color color)
+    public static void DrawDrink(Ui ui, Rectangle rect, Color color)
     {
         if (rect.Width <= 0) return;
 

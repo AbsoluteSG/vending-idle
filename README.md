@@ -21,6 +21,16 @@ instead. Stock is real and finite, so it has to be restocked, and "customers" ar
 auto-clickers that drain that same stock. More customers means faster drain, which is
 what makes restock automation something you actually want rather than a convenience.
 
+Every bottle sold also drips **crate tokens** into the supply crate on the floor
+beside the cabinet. When it can afford a crate it glows; click it and a drink floats
+out of the lid, shuffling rapidly through the possibilities and slowing as it climbs
+-- then locks onto the roll and bobs there until you click it to claim (the crate is
+dead until you do, and an unclaimed roll survives save/quit). Crates are the only
+source of **effect drinks**: lower value than the purchase drink of their tier, but
+each carries an aura (active while loaded *and stocked*) or an on-dispense proc.
+Duplicates raise the effect's level. Purchase drinks stay pure value -- effects push
+on every lever except the value curve, deliberately.
+
 ## Running it
 
 Requires the **.NET 8 SDK**. MonoGame's content pipeline is a local dotnet tool, so
@@ -66,6 +76,8 @@ dotnet run --project tools/VendingIdle.SimTest -- --curve  # progression report
 | Click a compartment | Select it, and slide the slot menu in |
 | Click a price ticket | Buy that compartment |
 | Mouse wheel over the glass | Scroll the machine |
+| Click the supply crate | Open a crate (when the gauge is full) |
+| Click the floating drink | Claim the crate roll |
 | Click an edge tab / `Q` / `E` | Slide the upgrades / slot menu in or out |
 | `Tab` | Send both menus away, or bring them back |
 | `R` | Restock everything |
@@ -89,6 +101,7 @@ Time away is simulated on load, capped at 8 hours.
 | `--save <path>` | Use a different save file |
 | `--screenshot <path> --frames <n>` | Render n frames, write a PNG, exit |
 | `--drawers open\|left\|right` | Slide menus in on launch (default: both closed) |
+| `--reveal` | Debug: grant tokens and open a crate on launch |
 
 `--screenshot` exists so the game can be smoke-tested headlessly:
 
@@ -102,13 +115,19 @@ xvfb-run -a -s "-screen 0 1280x720x24" \
 Slot purchasing and endless vertical expansion, click-to-dispense with the
 spare-change fallback and falling-drink feedback, double-drop crits, per-slot drink
 assignment, finite stock with manual and automated restocking, customers as
-auto-clickers, seven global upgrades, six drinks unlocked by lifetime earnings,
-save/load, and offline progress.
+auto-clickers, seven global upgrades, six purchase drinks unlocked by lifetime
+earnings, save/load, and offline progress.
 
-**Not built yet**, from the original design: packs and duplicate-levelling, machine
-themes, and the "Soda Pop" sequencing minigame. The data model leaves room for them
-— `DrinkDef` already carries `Rarity` and `EffectId`, and dispensing already walks
-slots in sequence order, which is what Soda Pop scoring would hang off.
+Plus the crate system: six effect drinks across three rarities, found only in supply
+crates paid for with tokens from bottles sold. Three auras (crit chance, customer
+speed, restock discount -- live only while the slot has stock, so aura slots stay
+inside the restock tension) and three procs (chain a second dispense, keep the
+bottle, drop a free bottle into a dry slot). Duplicate copies raise the effect level
+to a cap; the global caps still apply after auras, so no loadout escapes them.
+
+**Not built yet**, from the original design: machine themes and the "Soda Pop"
+sequencing minigame. Dispensing already walks slots in sequence order, which is what
+Soda Pop scoring would hang off.
 
 ## Layout
 
@@ -137,7 +156,8 @@ the normal MonoGame workflow whenever you want them.
 
 ## Balancing
 
-All the numbers live in `Balance.cs`, `UpgradeDatabase.cs` and `DrinkDatabase.cs`.
+All the numbers live in `Balance.cs`, `UpgradeDatabase.cs`, `DrinkDatabase.cs` and
+`EffectDatabase.cs`.
 After changing any of them, run `-- --curve` to see where a greedy player lands
 over 24 hours:
 
@@ -160,3 +180,10 @@ Two traps this economy already fell into, both now covered by assertions:
   per absolute can meant that at 110 capacity the last can of Midnight Brew cost
   76x the first — margins collapsed to zero and progression froze completely.
   `RestockGrowth` is now the empty-to-full price ratio, whatever the capacity.
+- **Crate prices must not outrun token income.** The first crate-price curve
+  (growth 1.25 per crate against a roughly linear token drip) stalled completely
+  by late game — a million banked tokens against a five-million crate. Now 300
+  base with 1.12 growth: first crate in ~2-3 minutes, still opening at hour 24.
+  Effect drinks accelerate the early game (~5x at 30 min) but converge by 24 h
+  (~1.04x) — utility, not a second value axis — and the 30-minute hyperinflation
+  assertion runs with the greedy player opening crates and loading effects.

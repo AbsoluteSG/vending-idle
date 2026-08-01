@@ -51,6 +51,20 @@ public static class Balance
     public const double AutoRestockSpeedPerLevel = 0.90;
     public const double AutoRestockIntervalMin = 0.05;
 
+    // ---- Supply crates (packs) -------------------------------------------
+    /// <summary>Crate tokens earned per bottle sold. Deliberately flat: pacing
+    /// tracks bottles vended, not the (exponential) money curve.</summary>
+    public const long TokensPerBottle = 1;
+    /// <summary>Extra tokens when a dispense crits.</summary>
+    public const long CritTokenBonus = 1;
+
+    /// <summary>Token price of the Nth crate (N = crates already opened).</summary>
+    public const double PackBaseCost = 300.0;
+    public const double PackCostGrowth = 1.12;
+
+    /// <summary>Duplicate copies past this stop raising the drink's effect level.</summary>
+    public const int EffectLevelMax = 5;
+
     // ---- Time ------------------------------------------------------------
     /// <summary>Live simulation runs at a fixed 20 Hz.</summary>
     public const double TickSeconds = 0.05;

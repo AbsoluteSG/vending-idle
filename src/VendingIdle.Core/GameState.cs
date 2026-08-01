@@ -11,12 +11,28 @@ namespace VendingIdle.Core;
 /// </summary>
 public sealed class GameState
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     public int Version { get; set; } = CurrentVersion;
 
     public double Money { get; set; }
     public double TotalEarned { get; set; }
+
+    // ---- Supply crates ---------------------------------------------------
+    /// <summary>Crate tokens, earned per bottle sold.</summary>
+    public long Tokens { get; set; }
+
+    public int PacksOpened { get; set; }
+
+    /// <summary>Copies owned per pack drink id. First copy unlocks; more raise the effect level.</summary>
+    public Dictionary<string, int> DrinkCopies { get; set; } = new();
+
+    /// <summary>
+    /// A crate roll that has been paid for but not yet redeemed -- the drink
+    /// bobbing above the crate. While set, no further crate can be opened.
+    /// Lives in the save so quitting mid-reveal cannot eat the roll.
+    /// </summary>
+    public string? PendingRevealId { get; set; }
 
     public List<Slot> Slots { get; set; } = new();
 
@@ -48,14 +64,25 @@ public sealed class GameState
     [JsonIgnore] public double ClickValueMultiplier =>
         Modifiers.ClickValueMultiplier(UpgradeLevels[(int)UpgradeId.ClickValue]);
 
+    // Auras fold into the existing derived getters, so the simulation and the
+    // UI pick them up with zero new call sites. The global caps are re-applied
+    // AFTER the aura contribution -- a stacked loadout can approach the caps,
+    // never pass them.
+
     [JsonIgnore] public double CritChance =>
-        Modifiers.CritChance(UpgradeLevels[(int)UpgradeId.CritChance]);
+        Math.Min(Balance.CritChanceMax,
+                 Modifiers.CritChance(UpgradeLevels[(int)UpgradeId.CritChance])
+                 + Auras.CritBonus);
 
     [JsonIgnore] public double CustomerInterval =>
-        Modifiers.CustomerInterval(UpgradeLevels[(int)UpgradeId.CustomerSpeed]);
+        Math.Max(Balance.CustomerIntervalMin,
+                 Modifiers.CustomerInterval(UpgradeLevels[(int)UpgradeId.CustomerSpeed])
+                 * Auras.CustomerIntervalFactor);
 
     [JsonIgnore] public double RestockDiscount =>
-        Modifiers.RestockDiscount(UpgradeLevels[(int)UpgradeId.RestockDiscount]);
+        Math.Max(Balance.RestockDiscountMin,
+                 Modifiers.RestockDiscount(UpgradeLevels[(int)UpgradeId.RestockDiscount])
+                 * Auras.RestockFactor);
 
     [JsonIgnore] public double AutoRestockInterval =>
         Modifiers.AutoRestockInterval(UpgradeLevels[(int)UpgradeId.AutoRestockSpeed]);
@@ -74,6 +101,102 @@ public sealed class GameState
         Balance.Cost(Balance.AutoRestockerBaseCost, Balance.AutoRestockerCostGrowth, AutoRestockersOwned);
 
     [JsonIgnore] public int TotalStock => Slots.Sum(s => s.Stock);
+
+    [JsonIgnore] public double NextPackCost =>
+        Balance.Cost(Balance.PackBaseCost, Balance.PackCostGrowth, PacksOpened);
+
+    /// <summary>Blocked while a rolled drink is still bobbing above the crate.</summary>
+    [JsonIgnore] public bool CanOpenPack =>
+        PendingRevealId is null && Tokens >= (long)Math.Ceiling(NextPackCost);
+
+    // ---------------------------------------------------------------------
+    // Effect auras
+    // ---------------------------------------------------------------------
+
+    public readonly struct AuraSnapshot
+    {
+        public double CritBonus { get; init; }
+        /// <summary>Multiplier on the customer interval (&lt; 1 is faster).</summary>
+        public double CustomerIntervalFactor { get; init; }
+        /// <summary>Multiplier on restock prices (&lt; 1 is cheaper).</summary>
+        public double RestockFactor { get; init; }
+
+        public static AuraSnapshot None => new()
+        {
+            CritBonus = 0.0,
+            CustomerIntervalFactor = 1.0,
+            RestockFactor = 1.0
+        };
+    }
+
+    /// <summary>
+    /// Aggregated auras. An aura is live while its drink is loaded in an
+    /// unlocked slot *with stock* -- an empty aura slot contributes nothing,
+    /// which keeps aura slots inside the restock tension rather than beside it.
+    /// Each distinct drink counts once, however many slots hold it: strength
+    /// comes from duplicate copies, not from loading it everywhere.
+    /// </summary>
+    [JsonIgnore] public AuraSnapshot Auras
+    {
+        get
+        {
+            var critBonus = 0.0;
+            var speedup = 0.0;
+            var restockCut = 0.0;
+
+            // Small fixed roster, so "once per distinct drink" is a seen-set of ids.
+            Span<bool> seen = stackalloc bool[DrinkDatabase.PackDrinks.Count];
+
+            foreach (var slot in Slots)
+            {
+                if (!slot.Unlocked || slot.Stock <= 0) continue;
+
+                var drink = slot.Drink;
+                if (drink?.Effect is not { } effect) continue;
+                if (!EffectDatabase.Get(effect).IsAura) continue;
+
+                var packIndex = IndexInPackRoster(drink.Id);
+                if (packIndex < 0 || seen[packIndex]) continue;
+                seen[packIndex] = true;
+
+                var level = EffectLevelOf(drink);
+                switch (effect)
+                {
+                    case EffectKind.CritAura:
+                        critBonus += EffectStrength.CritBonus(level);
+                        break;
+                    case EffectKind.CustomerSpeedAura:
+                        speedup += EffectStrength.CustomerSpeedup(level);
+                        break;
+                    case EffectKind.RestockDiscountAura:
+                        restockCut += EffectStrength.RestockCut(level);
+                        break;
+                }
+            }
+
+            return new AuraSnapshot
+            {
+                CritBonus = critBonus,
+                CustomerIntervalFactor = Math.Max(0.0, 1.0 - speedup),
+                RestockFactor = Math.Max(0.0, 1.0 - restockCut)
+            };
+        }
+    }
+
+    private static int IndexInPackRoster(string id)
+    {
+        for (var i = 0; i < DrinkDatabase.PackDrinks.Count; i++)
+            if (DrinkDatabase.PackDrinks[i].Id == id)
+                return i;
+        return -1;
+    }
+
+    public int CopiesOf(string id) =>
+        DrinkCopies.TryGetValue(id, out var n) ? n : 0;
+
+    /// <summary>Effect level from duplicate copies, capped. 0 means no effect.</summary>
+    public int EffectLevelOf(DrinkDef drink) =>
+        drink.Effect is null ? 0 : Math.Clamp(CopiesOf(drink.Id), 0, Balance.EffectLevelMax);
 
     // ---------------------------------------------------------------------
     // Construction
@@ -257,6 +380,42 @@ public sealed class GameState
     }
 
     /// <summary>
+    /// Pays for a crate and rolls its drink. The drink is NOT granted yet -- it
+    /// sits in <see cref="PendingRevealId"/> (bobbing above the crate) until
+    /// <see cref="RedeemReveal"/> claims it. Returns the rolled id, or null when
+    /// unaffordable or a reveal is already pending.
+    /// </summary>
+    public string? TryOpenPack(Random rng)
+    {
+        if (!CanOpenPack) return null;
+
+        Tokens -= (long)Math.Ceiling(NextPackCost);
+        PacksOpened++;
+        PendingRevealId = PackSystem.Roll(rng).Id;
+        return PendingRevealId;
+    }
+
+    /// <summary>Claims the pending reveal, granting the copy and unblocking the crate.</summary>
+    public PackRedeem? RedeemReveal()
+    {
+        if (PendingRevealId is null) return null;
+
+        var id = PendingRevealId;
+        PendingRevealId = null;
+
+        var before = CopiesOf(id);
+        DrinkCopies[id] = before + 1;
+
+        return new PackRedeem
+        {
+            DrinkId = id,
+            WasNew = before == 0,
+            Level = Math.Min(before + 1, Balance.EffectLevelMax),
+            AtMax = before + 1 > Balance.EffectLevelMax
+        };
+    }
+
+    /// <summary>
     /// Repairs a state loaded from disk: array resizes from older versions,
     /// slot indices, and the invariant spare row.
     /// </summary>
@@ -289,5 +448,42 @@ public sealed class GameState
         EnsureSpareRow();
         Money = Math.Max(0.0, Money);
         TotalEarned = Math.Max(Money, TotalEarned);
+
+        // ---- v1 -> v2 migration: crate fields ----------------------------
+        // A v1 save simply has none of these; defaulting to empty IS the
+        // migration. The rest is defence against a hand-edited file.
+        DrinkCopies ??= new Dictionary<string, int>();
+
+        foreach (var key in DrinkCopies.Keys.ToList())
+        {
+            var drink = DrinkDatabase.Get(key);
+            if (drink is null || drink.Source != DrinkSource.Pack)
+                DrinkCopies.Remove(key);
+            else if (DrinkCopies[key] < 0)
+                DrinkCopies[key] = 0;
+        }
+
+        Tokens = Math.Max(0, Tokens);
+        PacksOpened = Math.Max(0, PacksOpened);
+
+        // A pending reveal must be a real pack drink or it is dropped -- a
+        // stuck invalid pending id would deadlock the crate forever.
+        if (PendingRevealId is not null &&
+            DrinkDatabase.Get(PendingRevealId)?.Source != DrinkSource.Pack)
+            PendingRevealId = null;
+
+        // A pack drink loaded in a slot without an owned copy (hand-edited
+        // save) would be an un-earned unlock; clear it.
+        foreach (var slot in Slots)
+        {
+            var drink = slot.Drink;
+            if (drink is { Source: DrinkSource.Pack } && CopiesOf(drink.Id) < 1)
+            {
+                slot.DrinkId = null;
+                slot.Stock = 0;
+            }
+        }
+
+        Version = CurrentVersion;
     }
 }

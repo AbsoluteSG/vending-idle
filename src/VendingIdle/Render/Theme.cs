@@ -42,6 +42,11 @@ public static class Theme
     public static readonly Color MachineShellDark = new(30, 34, 48);
     public static readonly Color Tray = new(11, 14, 19);
 
+    // ---- The supply crate -------------------------------------------------
+    public static readonly Color CrateWood = new(112, 82, 54);
+    public static readonly Color CrateDark = new(76, 54, 34);
+    public static readonly Color CrateLight = new(148, 112, 76);
+
     public static readonly Color SlotEmpty = new(44, 49, 66);
     public static readonly Color SlotLocked = new(26, 29, 40);
     public static readonly Color SlotBuyable = new(52, 74, 66);

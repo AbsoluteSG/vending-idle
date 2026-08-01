@@ -36,6 +36,12 @@ public sealed class LaunchOptions
     /// </summary>
     public string? Drawers { get; private set; }
 
+    /// <summary>
+    /// Debug: grant enough tokens and open a crate on launch, so the mystery-box
+    /// reveal can be captured headlessly at any frame of its animation.
+    /// </summary>
+    public bool ForceReveal { get; private set; }
+
     public static LaunchOptions Parse(string[] args)
     {
         var o = new LaunchOptions();
@@ -63,6 +69,10 @@ public sealed class LaunchOptions
 
                 case "--drawers" when i + 1 < args.Length:
                     o.Drawers = args[++i].ToLowerInvariant();
+                    break;
+
+                case "--reveal":
+                    o.ForceReveal = true;
                     break;
             }
         }
