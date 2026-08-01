@@ -13,10 +13,34 @@ public static class Theme
     public static readonly Color PanelAlt = new(38, 43, 58);
     public static readonly Color PanelEdge = new(56, 63, 84);
 
-    public static readonly Color MachineShell = new(46, 52, 70);
+    // ---- The room the cabinet stands in ----------------------------------
+    public static readonly Color WallTop = new(21, 23, 32);
+    public static readonly Color WallBottom = new(38, 42, 56);
+    public static readonly Color WallGlow = new(52, 74, 104);
+    public static readonly Color FloorFar = new(52, 57, 72);
+    public static readonly Color FloorNear = new(25, 27, 36);
+    public static readonly Color FloorLine = new(74, 82, 102);
+    public static readonly Color Shadow = new(0, 0, 0);
+
+    // ---- The cabinet itself ----------------------------------------------
+    public static readonly Color Chassis = new(48, 74, 99);
+    public static readonly Color ChassisDark = new(30, 47, 65);
+    public static readonly Color ChassisLight = new(70, 103, 133);
+    public static readonly Color ChassisTrim = new(96, 134, 168);
+
+    public static readonly Color Glass = new(16, 24, 34);
+    public static readonly Color GlassEdge = new(72, 96, 122);
+    public static readonly Color GlassSheen = new(150, 190, 230);
+
+    public static readonly Color Shelf = new(54, 66, 82);
+    public static readonly Color ShelfShade = new(24, 33, 45);
+
+    public static readonly Color Led = new(9, 16, 13);
+    public static readonly Color LedText = new(255, 196, 92);
+    public static readonly Color LedDim = new(120, 92, 46);
+
     public static readonly Color MachineShellDark = new(30, 34, 48);
-    public static readonly Color MachineGlass = new(74, 88, 120);
-    public static readonly Color Tray = new(22, 25, 34);
+    public static readonly Color Tray = new(11, 14, 19);
 
     public static readonly Color SlotEmpty = new(44, 49, 66);
     public static readonly Color SlotLocked = new(26, 29, 40);

@@ -3,11 +3,16 @@
 An idle/clicker prototype where the play surface is a vending machine's stock grid.
 C# + MonoGame, no engine.
 
-The machine sits centre screen. Every bottle in stock is a coloured square in its
-slot's rack, so a glance tells you what is loaded and how full it is. Vending drops
-the top square out of the rack and it tumbles down into the tray. All the chrome --
-upgrades on the left, the selected slot on the right -- lives in drawers that slide
-in from the screen edges and tuck away again when you want to just watch the machine.
+The cabinet stands in a room, lit from behind, casting a shadow on the floor. Its
+drinks hang free in their compartments as individual rectangles -- placeholders for
+drink sprites -- and vending drops one out of the row so it tumbles down into the
+delivery tray and settles there. The till readout is an LED panel on the machine's
+own fascia rather than a HUD, and RESTOCK and SAVE are buttons on its service column
+beside the keypad.
+
+Nothing else is on screen by default. Upgrades and the selected slot live in menus
+that slide in from the screen edges when you call them, by clicking an edge tab or
+touching a compartment, and slide back out when you are done.
 
 You start with one slot in the bottom-left corner. Clicking dispenses a bottle from
 the next stocked slot in sequence; when everything is empty it pays out spare change
@@ -36,12 +41,12 @@ dotnet run --project tools/VendingIdle.SimTest -- --curve  # progression report
 
 | Input | Action |
 |---|---|
-| Click the tray / `Space` | Vend a bottle |
-| Click a slot | Select it, and slide the slot drawer out |
-| Click a locked slot | Buy it |
-| Mouse wheel over the rack | Scroll the machine |
-| Click an edge tab / `Q` / `E` | Toggle the upgrades / slot drawer |
-| `Tab` | Tuck both drawers away, or bring them back |
+| Click the delivery flap / `Space` | Vend a bottle |
+| Click a compartment | Select it, and slide the slot menu in |
+| Click a price ticket | Buy that compartment |
+| Mouse wheel over the glass | Scroll the machine |
+| Click an edge tab / `Q` / `E` | Slide the upgrades / slot menu in or out |
+| `Tab` | Send both menus away, or bring them back |
 | `R` | Restock everything |
 | `S` | Save |
 
@@ -56,7 +61,7 @@ hours.
 | `--fresh` | Ignore any existing save |
 | `--save <path>` | Use a different save file |
 | `--screenshot <path> --frames <n>` | Render n frames, write a PNG, exit |
-| `--drawers open\|closed\|left\|right` | Drawer state to animate to on launch |
+| `--drawers open\|left\|right` | Slide menus in on launch (default: both closed) |
 
 `--screenshot` exists so the game can be smoke-tested headlessly:
 
@@ -68,7 +73,7 @@ xvfb-run -a -s "-screen 0 1280x720x24" \
 ## What is in this prototype
 
 Slot purchasing and endless vertical expansion, click-to-dispense with the
-spare-change fallback and falling-bottle feedback, double-drop crits, per-slot drink
+spare-change fallback and falling-drink feedback, double-drop crits, per-slot drink
 assignment, finite stock with manual and automated restocking, customers as
 auto-clickers, seven global upgrades, six drinks unlocked by lifetime earnings,
 save/load, and offline progress.
@@ -95,8 +100,9 @@ The UI is immediate-mode: no retained widget tree, every panel is a function of
 that is far less to keep in sync. Drawers are drawn (and hit-tested) before the
 machine, so a click on one can never fall through to the vend tray behind it.
 
-There are no art assets. Every shape is drawn from textures generated at startup
-(`Render/Primitives.cs`). The content pipeline is wired up and builds the three
+There are no art assets. The room, the cabinet and every drink are drawn from
+textures generated at startup (`Render/Primitives.cs`) -- each drink is a plain
+rectangle sized and positioned exactly where its sprite will go. The content pipeline is wired up and builds the three
 SpriteFonts from a bundled DejaVu Sans, so real sprites can be dropped in through
 the normal MonoGame workflow whenever you want them.
 

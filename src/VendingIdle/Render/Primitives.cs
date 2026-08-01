@@ -144,12 +144,23 @@ public sealed class Primitives : IDisposable
                 new Vector2(0.5f), size, SpriteEffects.None, 0f);
     }
 
+    /// <summary>Rotated rectangle -- a tumbling bottle is taller than it is wide.</summary>
+    public void FillRotated(SpriteBatch sb, Vector2 center, Vector2 size, float rotation, Color color)
+    {
+        sb.Draw(_pixel, center, null, color, rotation,
+                new Vector2(0.5f), size, SpriteEffects.None, 0f);
+    }
+
     /// <summary>Soft glow, used for crit pops and the dispense flash.</summary>
     public void Glow(SpriteBatch sb, Vector2 center, float radius, Color color)
     {
         var d = (int)(radius * 2);
         sb.Draw(_radial, new Rectangle((int)(center.X - radius), (int)(center.Y - radius), d, d), color);
     }
+
+    /// <summary>Stretched radial falloff -- the cabinet's contact shadow and wall glow.</summary>
+    public void GlowRect(SpriteBatch sb, Rectangle rect, Color color) =>
+        sb.Draw(_radial, rect, color);
 
     public Texture2D Pixel => _pixel;
 

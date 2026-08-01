@@ -30,7 +30,7 @@ public sealed class Effects
     {
         public Vector2 Position;
         public Vector2 Velocity;
-        public float Size;
+        public Vector2 Size;
         public float Rotation;
         public float Spin;
         public float Life;
@@ -72,7 +72,7 @@ public sealed class Effects
     {
         if (_bottles.Count >= MaxBottles) return;
 
-        var size = Math.Max(5f, from.Width);
+        var size = new Vector2(Math.Max(5f, from.Width), Math.Max(5f, from.Height));
 
         _bottles.Add(new Bottle
         {
@@ -85,7 +85,7 @@ public sealed class Effects
             Life = 0f,
             MaxLife = 2.0f,
             Color = color,
-            FloorY = floorY - size * 0.5f,
+            FloorY = floorY - size.X * 0.5f,
             Bounces = 0,
             Resting = false
         });
@@ -139,7 +139,10 @@ public sealed class Effects
                         b.Resting = true;
                         b.Velocity = Vector2.Zero;
                         b.Spin = 0f;
-                        b.Rotation = 0f;
+
+                        // Drinks come to rest lying on their side in the tray,
+                        // which is the only way a tall bottle settles believably.
+                        b.Rotation = MathHelper.PiOver2;
                     }
                     else
                     {

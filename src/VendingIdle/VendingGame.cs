@@ -12,9 +12,10 @@ public sealed class VendingGame : Game, ISimEvents
 {
     private const int ScreenWidth = 1280;
     private const int ScreenHeight = 720;
-    private const int Margin = 16;
-    private const int MachineWidth = 600;
-    private const int DrawerWidth = 316;
+    private const int MachineWidth = 640;
+    private const int MachineHeight = 556;
+    private const int MachineTop = 62;
+    private const int DrawerWidth = 286;
 
     private readonly GraphicsDeviceManager _graphics;
     private readonly LaunchOptions _options;
@@ -29,11 +30,13 @@ public sealed class VendingGame : Game, ISimEvents
     private readonly MachineView _machine = new();
     private readonly Effects _fx = new();
 
+    // Both start tucked away: the cabinet is the scene, and a menu only exists
+    // once you have asked for it.
     private readonly SlidePanel _upgradeDrawer =
-        new(PanelSide.Left, DrawerWidth, "UPGRADES", open: true);
+        new(PanelSide.Left, DrawerWidth, "UPGRADES");
 
     private readonly SlidePanel _inspectorDrawer =
-        new(PanelSide.Right, DrawerWidth, "SLOT", open: true);
+        new(PanelSide.Right, DrawerWidth, "SLOT");
 
     private double _tickAccumulator;
     private double _autosaveTimer;
@@ -95,24 +98,24 @@ public sealed class VendingGame : Game, ISimEvents
     }
 
     /// <summary>
-    /// Both drawers are constructed open, so asking for anything else here makes
-    /// them animate to it from the first frame rather than snapping.
+    /// Drawers start closed, so anything asked for here animates open from the
+    /// first frame rather than snapping into place.
     /// </summary>
     private void ApplyDrawerOption()
     {
         switch (_options.Drawers)
         {
-            case "closed":
-                _upgradeDrawer.Close();
-                _inspectorDrawer.Close();
+            case "open":
+                _upgradeDrawer.Open();
+                _inspectorDrawer.Open();
                 break;
 
             case "left":
-                _inspectorDrawer.Close();
+                _upgradeDrawer.Open();
                 break;
 
             case "right":
-                _upgradeDrawer.Close();
+                _inspectorDrawer.Open();
                 break;
         }
     }
@@ -235,13 +238,12 @@ public sealed class VendingGame : Game, ISimEvents
             var drink = DrinkDatabase.Get(result.DrinkId);
             var bottleColor = drink is not null ? Theme.FromPacked(drink.Color) : Theme.TextDim;
 
-            // The simulation has already taken the bottles off the shelf, so the
-            // ones that just left were sitting at [Stock .. Stock + Cans - 1].
-            var remaining = _state.SlotAt(result.SlotIndex)?.Stock ?? 0;
-
+            // Drinks leave from the front of the row, so ask for them by position
+            // from the front -- the row shows proportional fill, and an absolute
+            // stock index would fall off the end of it.
             for (var i = 0; i < result.Cans; i++)
             {
-                if (_machine.TryGetBottleRect(result.SlotIndex, remaining + i, out var from))
+                if (_machine.TryGetDispensedBottle(result.SlotIndex, i, out var from))
                     _fx.SpawnBottle(from, _machine.TrayFloorY, bottleColor);
             }
         }
@@ -267,23 +269,20 @@ public sealed class VendingGame : Game, ISimEvents
         _ui.BeginFrame(_sb, Mouse.GetState(), screen);
         _ui.Begin();
 
-        // The machine is the stage: centred, with everything else either floating
-        // above it or sliding in from an edge.
-        var topBar = new Rectangle((ScreenWidth - MachineWidth) / 2, 10, MachineWidth, 52);
-        var contentY = topBar.Bottom + 10;
-        var contentHeight = ScreenHeight - contentY - Margin;
+        var machineBounds = new Rectangle((ScreenWidth - MachineWidth) / 2, MachineTop,
+                                          MachineWidth, MachineHeight);
+        var floorY = machineBounds.Bottom;
 
-        var machineBounds = new Rectangle((ScreenWidth - MachineWidth) / 2, contentY,
-                                          MachineWidth, contentHeight);
+        var drawerTop = 24;
+        var drawerHeight = ScreenHeight - drawerTop * 2;
+        var upgradeBounds = _upgradeDrawer.Bounds(screen, drawerTop, drawerHeight);
+        var inspectorBounds = _inspectorDrawer.Bounds(screen, drawerTop, drawerHeight);
 
-        var upgradeBounds = _upgradeDrawer.Bounds(screen, contentY, contentHeight);
-        var inspectorBounds = _inspectorDrawer.Bounds(screen, contentY, contentHeight);
+        // Room first, so the cabinet has somewhere to stand.
+        Backdrop.Draw(_ui, screen, machineBounds, floorY);
 
-        // Drawers are drawn (and therefore hit-tested) before the machine so a
-        // click on one can never fall through to the vend tray behind it.
-        var topAction = TopBar.Draw(_ui, _state, topBar, _smoothedIncome,
-                                    SaveSystem.SecondsSinceSave(_state));
-
+        // Drawers are hit-tested before the cabinet so a click on an open menu
+        // can never fall through to the delivery flap behind it.
         UpgradeId? upgradeClicked = null;
         if (_upgradeDrawer.Visible)
             upgradeClicked = UpgradePanel.Draw(_ui, _state, upgradeBounds);
@@ -295,20 +294,22 @@ public sealed class VendingGame : Game, ISimEvents
         if (_upgradeDrawer.DrawTab(_ui, upgradeBounds, screen)) _upgradeDrawer.Toggle();
         if (_inspectorDrawer.DrawTab(_ui, inspectorBounds, screen)) _inspectorDrawer.Toggle();
 
-        var machineAction = _machine.Draw(_ui, _state, machineBounds, _fx, _elapsed, CurrentHint());
+        var machineAction = _machine.Draw(_ui, _state, machineBounds, _fx, _elapsed, _smoothedIncome);
 
-        // Effects are clipped to the machine so rising payouts cannot scribble
-        // over the top bar or the side panels.
+        // Effects are clipped to the cabinet so falling drinks cannot spill out
+        // of it and over the room.
         _ui.PushClip(machineBounds);
         _fx.Draw(_ui);
         _ui.PopClip();
+
+        DrawHint(machineBounds);
 
         if (_offlineReport is not null) DrawOfflineToast(machineBounds);
 
         _ui.DrawTooltip(screen);
         _ui.End();
 
-        ApplyActions(topAction, inspectorAction, upgradeClicked, machineAction);
+        ApplyActions(inspectorAction, upgradeClicked, machineAction);
 
         base.Draw(gameTime);
 
@@ -320,11 +321,10 @@ public sealed class VendingGame : Game, ISimEvents
         }
     }
 
-    private void ApplyActions(TopBarAction top, InspectorAction inspector,
-                              UpgradeId? upgrade, MachineAction machine)
+    private void ApplyActions(InspectorAction inspector, UpgradeId? upgrade, MachineAction machine)
     {
-        if (top.RestockAll) _state.RestockAll();
-        if (top.Save) SaveSystem.Save(_state, _options.SavePath);
+        if (machine.RestockAll) _state.RestockAll();
+        if (machine.Save) SaveSystem.Save(_state, _options.SavePath);
 
         if (inspector.AssignDrinkId is not null)
             _state.TryAssignDrink(_machine.SelectedSlot, inspector.AssignDrinkId);
@@ -365,7 +365,19 @@ public sealed class VendingGame : Game, ISimEvents
         if (machine.Vend) PlayerVend();
     }
 
-    /// <summary>Contextual nudges, so the opening minutes are not a guessing game.</summary>
+    /// <summary>
+    /// Contextual nudges, printed on the wall above the cabinet -- the one place
+    /// that is always empty, and it keeps tutorial text off the machine itself.
+    /// </summary>
+    private void DrawHint(Rectangle machineBounds)
+    {
+        var hint = CurrentHint();
+        if (hint is null) return;
+
+        var rect = new Rectangle(machineBounds.X, machineBounds.Y - 34, machineBounds.Width, 20);
+        _ui.T.DrawIn(_sb, hint, rect, Theme.TextDim, FontSize.Small, Align.Center);
+    }
+
     private string? CurrentHint()
     {
         if (_state.TotalStock > 0)
