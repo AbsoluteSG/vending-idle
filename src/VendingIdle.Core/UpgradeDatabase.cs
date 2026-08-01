@@ -47,7 +47,7 @@ public static class UpgradeDatabase
         {
             Id = UpgradeId.ClickValue,
             Name = "Premium Pricing",
-            Description = "Every can dispensed is worth more.",
+            Description = "Every bottle dispensed is worth more.",
             BaseCost = 40,
             Growth = 1.3,
             EffectText = l => "x" + Modifiers.ClickValueMultiplier(l).ToString("0.##", CultureInfo.InvariantCulture) + " value"
@@ -56,7 +56,7 @@ public static class UpgradeDatabase
         {
             Id = UpgradeId.CritChance,
             Name = "Loose Coil",
-            Description = "Chance to drop two cans at once for double money.",
+            Description = "Chance to drop two bottles at once for double money.",
             BaseCost = 150,
             Growth = 1.5,
             MaxLevel = 29,
@@ -87,10 +87,10 @@ public static class UpgradeDatabase
         {
             Id = UpgradeId.SlotCapacity,
             Name = "Deeper Shelves",
-            Description = "Every slot holds more cans.",
+            Description = "Every slot holds more bottles.",
             BaseCost = 120,
             Growth = 1.45,
-            EffectText = l => Modifiers.SlotCapacity(l) + " cans per slot"
+            EffectText = l => Modifiers.SlotCapacity(l) + " bottles per slot"
         },
         new()
         {
@@ -110,7 +110,7 @@ public static class UpgradeDatabase
             BaseCost = 450,
             Growth = 1.6,
             MaxLevel = 25,
-            EffectText = l => Secs(Modifiers.AutoRestockInterval(l)) + " per can"
+            EffectText = l => Secs(Modifiers.AutoRestockInterval(l)) + " per bottle"
         }
     };
 

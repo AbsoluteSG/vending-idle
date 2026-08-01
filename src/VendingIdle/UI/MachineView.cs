@@ -17,15 +17,47 @@ public struct MachineAction
 }
 
 /// <summary>
-/// Draws the machine and its stock grid. Row 0 is the bottom row; the grid grows
-/// upward without limit and scrolls with the wheel once it outruns the window.
+/// How the bottles of one slot are packed into its cell: a grid of squares, one
+/// square per bottle the slot can hold, filled from the bottom-left up.
+/// </summary>
+public readonly struct BottleGrid
+{
+    public Rectangle Area { get; init; }
+    public int Columns { get; init; }
+    public int Size { get; init; }
+    public int Gap { get; init; }
+
+    /// <summary>
+    /// Rectangle of the nth bottle, counting from the bottom-left. Bottles stack
+    /// upward so the one that leaves on the next click is always the top one.
+    /// </summary>
+    public Rectangle BottleAt(int n)
+    {
+        if (Columns <= 0) return Rectangle.Empty;
+
+        var col = n % Columns;
+        var row = n / Columns;
+        var stride = Size + Gap;
+
+        return new Rectangle(
+            Area.X + col * stride,
+            Area.Bottom - Size - row * stride,
+            Size, Size);
+    }
+}
+
+/// <summary>
+/// The machine: a centred stage holding a grid of slots, each slot a rack of
+/// bottle squares. Row 0 is the bottom row and the rack grows upward without
+/// limit, scrolling with the wheel once it outruns the window.
 /// </summary>
 public sealed class MachineView
 {
-    private const int CellPad = 8;
-    private const int CellHeight = 88;
-    private const int HeaderHeight = 40;
-    private const int TrayHeight = 84;
+    private const int CellPad = 7;
+    private const int CellHeight = 96;
+    private const int HeaderHeight = 38;
+    private const int TrayHeight = 92;
+    private const int MaxBottleSize = 15;
 
     public int SelectedSlot { get; set; }
     public float Scroll { get; private set; }
@@ -33,18 +65,29 @@ public sealed class MachineView
     private Rectangle _glass;
     private Rectangle _tray;
     private readonly Dictionary<int, Rectangle> _cellRects = new();
+    private readonly Dictionary<int, BottleGrid> _bottleGrids = new();
 
-    /// <summary>Screen position of a slot, for spawning effects. False if off-screen.</summary>
+    public Rectangle TrayRect => _tray;
+    public Rectangle GlassRect => _glass;
+
+    /// <summary>Where a dropped bottle comes to rest.</summary>
+    public float TrayFloorY => _tray.Bottom - 14;
+
     public bool TryGetCellRect(int index, out Rectangle rect) =>
         _cellRects.TryGetValue(index, out rect);
 
-    public Rectangle TrayRect => _tray;
+    /// <summary>
+    /// Screen rectangle of a specific bottle in a slot, so a dispensed bottle can
+    /// start falling from exactly where it was sitting.
+    /// </summary>
+    public bool TryGetBottleRect(int slotIndex, int bottleIndex, out Rectangle rect)
+    {
+        rect = Rectangle.Empty;
+        if (!_bottleGrids.TryGetValue(slotIndex, out var grid)) return false;
 
-    /// <summary>The stock area behind the glass. Empty space here is where hints go.</summary>
-    public Rectangle GlassRect => _glass;
-
-    /// <summary>Where cans land: the floor of the dispense tray.</summary>
-    public float TrayFloorY => _tray.Bottom - 18;
+        rect = grid.BottleAt(bottleIndex);
+        return rect != Rectangle.Empty;
+    }
 
     public MachineAction Draw(Ui ui, GameState state, Rectangle bounds, Effects fx, double now,
                               string? hint = null)
@@ -52,8 +95,8 @@ public sealed class MachineView
         var action = MachineAction.None;
 
         // ---- Shell --------------------------------------------------------
-        ui.P.FillRounded(ui.Sb, bounds, 12, Theme.MachineShell);
-        ui.P.OutlineRounded(ui.Sb, bounds, 12, Theme.PanelEdge);
+        ui.P.FillRounded(ui.Sb, bounds, 14, Theme.MachineShell);
+        ui.P.OutlineRounded(ui.Sb, bounds, 14, Theme.PanelEdge);
 
         // The brand plate doubles as the hint line. It is the one strip of the
         // machine the grid never grows into, so a hint can never collide with a slot.
@@ -74,9 +117,9 @@ public sealed class MachineView
             bounds.X + 12,
             _glass.Bottom + 6,
             bounds.Width - 24,
-            TrayHeight - 12);
+            TrayHeight - 14);
 
-        // ---- Grid ---------------------------------------------------------
+        // ---- Rack ---------------------------------------------------------
         var rows = state.RowCount;
         var contentHeight = rows * (CellHeight + CellPad) + CellPad;
         var maxScroll = Math.Max(0f, contentHeight - _glass.Height);
@@ -90,6 +133,7 @@ public sealed class MachineView
         var cellWidth = (_glass.Width - CellPad * (columns + 1)) / columns;
 
         _cellRects.Clear();
+        _bottleGrids.Clear();
         ui.PushClip(_glass);
 
         // The mouse only counts as being over a cell when it is inside the glass,
@@ -119,21 +163,66 @@ public sealed class MachineView
 
         ui.PopClip();
 
-        // Scroll affordances, drawn outside the clip so they are never cut off.
         if (Scroll < maxScroll - 0.5f)
             ui.T.DrawIn(ui.Sb, "more above",
-                new Rectangle(_glass.X, _glass.Y + 2, _glass.Width, 16),
+                new Rectangle(_glass.X, _glass.Y + 2, _glass.Width, 14),
                 Theme.TextFaint, FontSize.Small, Align.Center);
 
         if (Scroll > 0.5f)
             ui.T.DrawIn(ui.Sb, "more below",
-                new Rectangle(_glass.X, _glass.Bottom - 18, _glass.Width, 16),
+                new Rectangle(_glass.X, _glass.Bottom - 16, _glass.Width, 14),
                 Theme.TextFaint, FontSize.Small, Align.Center);
 
-        // ---- Tray / vend button -------------------------------------------
         DrawTray(ui, state, fx, ref action);
 
         return action;
+    }
+
+    /// <summary>
+    /// Packs <paramref name="capacity"/> squares into the area as large as they
+    /// will go, by trying every column count and keeping the best.
+    /// </summary>
+    private static BottleGrid ComputeGrid(Rectangle area, int capacity)
+    {
+        if (capacity <= 0 || area.Width <= 0 || area.Height <= 0)
+            return default;
+
+        var bestSize = 0;
+        var bestColumns = 1;
+        var gap = 2;
+
+        for (var columns = 1; columns <= capacity; columns++)
+        {
+            var rows = (capacity + columns - 1) / columns;
+
+            var w = (area.Width - gap * (columns - 1)) / (float)columns;
+            var h = (area.Height - gap * (rows - 1)) / (float)rows;
+            var size = (int)MathF.Floor(MathF.Min(w, h));
+
+            if (size > bestSize)
+            {
+                bestSize = size;
+                bestColumns = columns;
+            }
+        }
+
+        // Very high capacities squeeze the squares to nothing; a 1px bottle with a
+        // 2px gap is worse than a 1px bottle flush against its neighbour.
+        if (bestSize < 3) gap = 1;
+        bestSize = Math.Clamp(bestSize, 1, MaxBottleSize);
+
+        var stride = bestSize + gap;
+        var usedWidth = bestColumns * stride - gap;
+
+        return new BottleGrid
+        {
+            // Centre the rack horizontally; it hangs from the bottom of the area.
+            Area = new Rectangle(area.X + (area.Width - usedWidth) / 2, area.Y,
+                                 usedWidth, area.Height),
+            Columns = bestColumns,
+            Size = bestSize,
+            Gap = gap
+        };
     }
 
     private void DrawCell(Ui ui, GameState state, Slot slot, Rectangle rect,
@@ -156,11 +245,11 @@ public sealed class MachineView
             if (purchasable)
             {
                 ui.T.DrawIn(ui.Sb, "Buy slot",
-                    new Rectangle(rect.X, rect.Y + 20, rect.Width, 18),
+                    new Rectangle(rect.X, rect.Y + 26, rect.Width, 18),
                     Theme.TextDim, FontSize.Small, Align.Center);
 
                 ui.T.DrawIn(ui.Sb, Money.Cash(state.NextSlotCost),
-                    new Rectangle(rect.X, rect.Y + 40, rect.Width, 20),
+                    new Rectangle(rect.X, rect.Y + 46, rect.Width, 20),
                     affordable ? Theme.Money : Theme.TextFaint, FontSize.Normal, Align.Center);
 
                 if (hovered && ui.MousePressed)
@@ -193,31 +282,52 @@ public sealed class MachineView
             var color = Theme.FromPacked(drink.Color);
             var capacity = state.SlotCapacity;
 
-            // Stack of cans: a compact read of "how full is this coil".
-            var canArea = new Rectangle(rect.X + 8, rect.Y + 8, rect.Width - 16, 34);
-            DrawCanStack(ui, canArea, slot.Stock, capacity, color);
+            // One square per bottle. The rack is the readout -- no bar needed.
+            var rackArea = new Rectangle(rect.X + 5, rect.Y + 5, rect.Width - 10, rect.Height - 23);
+            var grid = ComputeGrid(rackArea, capacity);
+            _bottleGrids[slot.Index] = grid;
 
-            ui.T.DrawIn(ui.Sb, ui.T.Fit(drink.Name, rect.Width - 10, FontSize.Small),
-                new Rectangle(rect.X, rect.Y + 44, rect.Width, 16),
-                Theme.Text, FontSize.Small, Align.Center);
+            var emptyColor = Theme.MachineShellDark;
+            for (var i = 0; i < capacity; i++)
+            {
+                var bottle = grid.BottleAt(i);
+                if (bottle.Width <= 0) break;
 
-            var barRect = new Rectangle(rect.X + 8, rect.Y + 64, rect.Width - 16, 6);
-            var fraction = capacity > 0 ? slot.Stock / (float)capacity : 0f;
-            var barColor = slot.Stock == 0 ? Theme.Negative
-                         : fraction < 0.25f ? Theme.Money
-                         : Theme.Positive;
-            ui.ProgressBar(barRect, fraction, barColor);
+                if (i < slot.Stock)
+                {
+                    ui.P.Fill(ui.Sb, bottle, color);
 
-            ui.T.DrawIn(ui.Sb, $"{slot.Stock}/{capacity}",
-                new Rectangle(rect.X, rect.Y + 70, rect.Width, 14),
-                Theme.TextFaint, FontSize.Small, Align.Center);
+                    // A lighter cap reads as a bottle neck once squares are big enough.
+                    if (grid.Size >= 7)
+                        ui.P.Fill(ui.Sb,
+                            new Rectangle(bottle.X, bottle.Y, bottle.Width, 2),
+                            Color.Lerp(color, Color.White, 0.45f));
+                }
+                else
+                {
+                    ui.P.Fill(ui.Sb, bottle, emptyColor);
+                }
+            }
+
+            // The squares and their colour already say what is loaded and how
+            // much; the strip underneath only needs the count. The name lives in
+            // the hover tooltip so nothing has to be truncated to "Cola Clas...".
+            var label = slot.Stock == 0 ? "empty" : $"{slot.Stock}/{capacity}";
+
+            ui.T.DrawIn(ui.Sb, label,
+                new Rectangle(rect.X, rect.Bottom - 18, rect.Width, 15),
+                slot.Stock == 0 ? Theme.Negative : Color.Lerp(color, Color.White, 0.35f),
+                FontSize.Small, Align.Center);
+
+            if (hovered)
+                ui.SetTooltip($"{drink.Name} - {Money.Cash(drink.Value * state.ClickValueMultiplier)} each",
+                              rect);
         }
 
         if (slot.HasAutoRestocker)
         {
-            // Pulsing dot marks an automated slot without stealing space.
             var pulse = 0.6f + 0.4f * (float)Math.Sin(now * 3.0);
-            ui.P.FillRounded(ui.Sb, new Rectangle(rect.Right - 12, rect.Y + 6, 6, 6), 3,
+            ui.P.FillRounded(ui.Sb, new Rectangle(rect.Right - 11, rect.Y + 5, 6, 6), 3,
                              Theme.Accent * pulse);
         }
 
@@ -228,34 +338,11 @@ public sealed class MachineView
         }
     }
 
-    private static void DrawCanStack(Ui ui, Rectangle area, int stock, int capacity, Color color)
-    {
-        if (capacity <= 0) return;
-
-        // Cap the drawn cans so a 60-capacity slot does not turn into mush.
-        const int maxDrawn = 8;
-        var drawn = Math.Min(maxDrawn, capacity);
-        var filled = capacity == 0 ? 0 : (int)Math.Round(stock / (double)capacity * drawn);
-        if (stock > 0 && filled == 0) filled = 1;
-
-        var gap = 3;
-        var canWidth = Math.Max(4, (area.Width - gap * (drawn - 1)) / drawn);
-        var totalWidth = canWidth * drawn + gap * (drawn - 1);
-        var x = area.X + (area.Width - totalWidth) / 2;
-
-        for (var i = 0; i < drawn; i++)
-        {
-            var rect = new Rectangle(x + i * (canWidth + gap), area.Y, canWidth, area.Height);
-            ui.P.FillRounded(ui.Sb, rect, 2, i < filled ? color : Theme.MachineShellDark);
-        }
-    }
-
     private void DrawTray(Ui ui, GameState state, Effects fx, ref MachineAction action)
     {
         var hovered = !ui.ClickConsumed && ui.Hovering(_tray);
 
-        var baseColor = hovered ? Theme.PanelAlt : Theme.Tray;
-        ui.P.FillRounded(ui.Sb, _tray, 8, baseColor);
+        ui.P.FillRounded(ui.Sb, _tray, 8, hovered ? Theme.PanelAlt : Theme.Tray);
 
         if (fx.TrayFlash > 0f)
             ui.P.FillRounded(ui.Sb, _tray, 8, Theme.Accent * (fx.TrayFlash * 0.25f));
@@ -264,11 +351,11 @@ public sealed class MachineView
 
         var label = state.TotalStock > 0 ? "PUSH TO VEND" : "SHAKE FOR CHANGE";
         ui.T.DrawIn(ui.Sb, label,
-            new Rectangle(_tray.X, _tray.Y + 8, _tray.Width, 22),
+            new Rectangle(_tray.X, _tray.Y + 6, _tray.Width, 20),
             Theme.Text, FontSize.Normal, Align.Center);
 
         ui.T.DrawIn(ui.Sb, "click here or press Space",
-            new Rectangle(_tray.X, _tray.Y + 30, _tray.Width, 16),
+            new Rectangle(_tray.X, _tray.Y + 26, _tray.Width, 14),
             Theme.TextFaint, FontSize.Small, Align.Center);
 
         if (hovered && ui.MousePressed)

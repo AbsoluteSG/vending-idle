@@ -4,11 +4,14 @@ using VendingIdle.Render;
 
 namespace VendingIdle.UI;
 
-/// <summary>The global upgrade list. Returns the upgrade clicked this frame, if any.</summary>
+/// <summary>
+/// The left drawer: lifetime stats on top, then the global upgrade list. Returns
+/// the upgrade clicked this frame, if any.
+/// </summary>
 public static class UpgradePanel
 {
-    private const int CardHeight = 74;
-    private const int CardGap = 6;
+    private const int CardHeight = 62;
+    private const int CardGap = 5;
 
     public static UpgradeId? Draw(Ui ui, GameState state, Rectangle bounds)
     {
@@ -17,7 +20,7 @@ public static class UpgradePanel
         ui.Panel(bounds, "UPGRADES");
         var body = Ui.PanelBody(bounds);
 
-        var y = body.Y;
+        var y = DrawStats(ui, state, body);
 
         foreach (var def in UpgradeDatabase.All)
         {
@@ -38,32 +41,35 @@ public static class UpgradePanel
 
             ui.P.FillRounded(ui.Sb, rect, 6, bg);
 
-            // Name and level
-            ui.T.Draw(ui.Sb, ui.T.Fit(def.Name, rect.Width - 60, FontSize.Small),
-                      new Vector2(rect.X + 10, rect.Y + 6), Theme.Text, FontSize.Small);
+            ui.T.Draw(ui.Sb, ui.T.Fit(def.Name, rect.Width - 54, FontSize.Small),
+                      new Vector2(rect.X + 9, rect.Y + 5), Theme.Text, FontSize.Small);
 
             ui.T.DrawIn(ui.Sb, maxed ? "MAX" : $"Lv {level}",
-                new Rectangle(rect.X, rect.Y + 6, rect.Width - 10, 16),
+                new Rectangle(rect.X, rect.Y + 5, rect.Width - 9, 16),
                 maxed ? Theme.Accent : Theme.TextDim, FontSize.Small, Align.Right);
 
-            // Current effect
-            ui.T.Draw(ui.Sb, ui.T.Fit(def.EffectText(level), rect.Width - 20, FontSize.Small),
-                      new Vector2(rect.X + 10, rect.Y + 26), Theme.TextDim, FontSize.Small);
+            ui.T.Draw(ui.Sb, ui.T.Fit(def.EffectText(level), rect.Width - 18, FontSize.Small),
+                      new Vector2(rect.X + 9, rect.Y + 23), Theme.TextDim, FontSize.Small);
 
-            // Price
             if (maxed)
             {
                 ui.T.Draw(ui.Sb, "fully upgraded",
-                          new Vector2(rect.X + 10, rect.Y + 48), Theme.TextFaint, FontSize.Small);
+                          new Vector2(rect.X + 9, rect.Y + 41), Theme.TextFaint, FontSize.Small);
             }
             else
             {
-                ui.T.Draw(ui.Sb, Money.Cash(cost),
-                          new Vector2(rect.X + 10, rect.Y + 48),
-                          affordable ? Theme.Money : Theme.TextFaint);
+                var costText = Money.Cash(cost);
+                ui.T.Draw(ui.Sb, costText,
+                          new Vector2(rect.X + 9, rect.Y + 41),
+                          affordable ? Theme.Money : Theme.TextFaint, FontSize.Small);
 
-                ui.T.DrawIn(ui.Sb, "→ " + def.EffectText(level + 1),
-                    new Rectangle(rect.X, rect.Y + 50, rect.Width - 10, 16),
+                // Give the "next level" preview whatever the price left over,
+                // rather than a fixed fraction that truncates on long effects.
+                var costWidth = ui.T.Measure(costText, FontSize.Small).X;
+                var room = rect.Width - 18 - costWidth - 10;
+
+                ui.T.DrawIn(ui.Sb, ui.T.Fit("→ " + def.EffectText(level + 1), room, FontSize.Small),
+                    new Rectangle(rect.X, rect.Y + 41, rect.Width - 9, 16),
                     Theme.TextFaint, FontSize.Small, Align.Right);
             }
 
@@ -80,5 +86,34 @@ public static class UpgradePanel
         }
 
         return bought;
+    }
+
+    /// <summary>Lifetime counters. Returns the y to carry on drawing from.</summary>
+    private static int DrawStats(Ui ui, GameState state, Rectangle body)
+    {
+        var y = body.Y;
+
+        ui.StatRow(new Rectangle(body.X, y, body.Width, 16), "Lifetime",
+                   Money.Cash(state.TotalEarned), Theme.Money);
+        y += 17;
+
+        ui.StatRow(new Rectangle(body.X, y, body.Width, 16), "Customers",
+                   state.Customers.ToString());
+        y += 17;
+
+        ui.StatRow(new Rectangle(body.X, y, body.Width, 16), "Slots owned",
+                   state.SlotsOwned.ToString());
+        y += 17;
+
+        ui.StatRow(new Rectangle(body.X, y, body.Width, 16), "Bottles sold",
+                   state.TotalCansSold.ToString());
+        y += 17;
+
+        ui.StatRow(new Rectangle(body.X, y, body.Width, 16), "Bottles in stock",
+                   $"{state.TotalStock} / {state.SlotsOwned * state.SlotCapacity}");
+        y += 22;
+
+        ui.Separator(body.X, y, body.Width);
+        return y + 9;
     }
 }

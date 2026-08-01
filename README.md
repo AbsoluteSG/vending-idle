@@ -3,12 +3,17 @@
 An idle/clicker prototype where the play surface is a vending machine's stock grid.
 C# + MonoGame, no engine.
 
-You start with one slot in the bottom-left corner. Clicking the machine dispenses a
-can from the next stocked slot in sequence; when everything is empty it pays out
-spare change instead. Stock is real and finite, so it has to be restocked, and
-"customers" are auto-clickers that drain that same stock. More customers means
-faster drain, which is what makes restock automation something you actually want
-rather than a convenience.
+The machine sits centre screen. Every bottle in stock is a coloured square in its
+slot's rack, so a glance tells you what is loaded and how full it is. Vending drops
+the top square out of the rack and it tumbles down into the tray. All the chrome --
+upgrades on the left, the selected slot on the right -- lives in drawers that slide
+in from the screen edges and tuck away again when you want to just watch the machine.
+
+You start with one slot in the bottom-left corner. Clicking dispenses a bottle from
+the next stocked slot in sequence; when everything is empty it pays out spare change
+instead. Stock is real and finite, so it has to be restocked, and "customers" are
+auto-clickers that drain that same stock. More customers means faster drain, which is
+what makes restock automation something you actually want rather than a convenience.
 
 ## Running it
 
@@ -31,10 +36,12 @@ dotnet run --project tools/VendingIdle.SimTest -- --curve  # progression report
 
 | Input | Action |
 |---|---|
-| Click the tray / `Space` | Vend a can |
-| Click a slot | Select it (the inspector acts on the selected slot) |
+| Click the tray / `Space` | Vend a bottle |
+| Click a slot | Select it, and slide the slot drawer out |
 | Click a locked slot | Buy it |
-| Mouse wheel over the grid | Scroll the machine |
+| Mouse wheel over the rack | Scroll the machine |
+| Click an edge tab / `Q` / `E` | Toggle the upgrades / slot drawer |
+| `Tab` | Tuck both drawers away, or bring them back |
 | `R` | Restock everything |
 | `S` | Save |
 
@@ -49,6 +56,7 @@ hours.
 | `--fresh` | Ignore any existing save |
 | `--save <path>` | Use a different save file |
 | `--screenshot <path> --frames <n>` | Render n frames, write a PNG, exit |
+| `--drawers open\|closed\|left\|right` | Drawer state to animate to on launch |
 
 `--screenshot` exists so the game can be smoke-tested headlessly:
 
@@ -60,9 +68,10 @@ xvfb-run -a -s "-screen 0 1280x720x24" \
 ## What is in this prototype
 
 Slot purchasing and endless vertical expansion, click-to-dispense with the
-spare-change fallback, double-drop crits, per-slot drink assignment, finite stock
-with manual and automated restocking, customers as auto-clickers, seven global
-upgrades, six drinks unlocked by lifetime earnings, save/load, and offline progress.
+spare-change fallback and falling-bottle feedback, double-drop crits, per-slot drink
+assignment, finite stock with manual and automated restocking, customers as
+auto-clickers, seven global upgrades, six drinks unlocked by lifetime earnings,
+save/load, and offline progress.
 
 **Not built yet**, from the original design: packs and duplicate-levelling, machine
 themes, and the "Soda Pop" sequencing minigame. The data model leaves room for them
@@ -83,7 +92,8 @@ tools/VendingIdle.SimTest/ headless economy checks and the balance report
 
 The UI is immediate-mode: no retained widget tree, every panel is a function of
 `GameState`, redrawn each frame. For a prototype whose numbers change constantly
-that is far less to keep in sync.
+that is far less to keep in sync. Drawers are drawn (and hit-tested) before the
+machine, so a click on one can never fall through to the vend tray behind it.
 
 There are no art assets. Every shape is drawn from textures generated at startup
 (`Render/Primitives.cs`). The content pipeline is wired up and builds the three

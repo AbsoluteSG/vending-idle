@@ -134,6 +134,16 @@ public sealed class Primitives : IDisposable
         }
     }
 
+    /// <summary>
+    /// Axis-free square, used for bottles tumbling down the machine. Rotation is
+    /// why these are drawn from the raw pixel rather than through FillRounded.
+    /// </summary>
+    public void FillRotated(SpriteBatch sb, Vector2 center, float size, float rotation, Color color)
+    {
+        sb.Draw(_pixel, center, null, color, rotation,
+                new Vector2(0.5f), size, SpriteEffects.None, 0f);
+    }
+
     /// <summary>Soft glow, used for crit pops and the dispense flash.</summary>
     public void Glow(SpriteBatch sb, Vector2 center, float radius, Color color)
     {

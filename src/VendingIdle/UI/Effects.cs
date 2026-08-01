@@ -6,13 +6,14 @@ using VendingIdle.Render;
 namespace VendingIdle.UI;
 
 /// <summary>
-/// Click feedback: rising payout popups and cans tumbling into the tray.
-/// Purely cosmetic -- the simulation never reads any of this.
+/// Click feedback: bottles tumbling out of the rack into the tray, and rising
+/// payout text. Purely cosmetic -- the simulation never reads any of this.
 /// </summary>
 public sealed class Effects
 {
-    private const int MaxPopups = 40;
-    private const int MaxCans = 40;
+    private const int MaxPopups = 32;
+    private const int MaxBottles = 64;
+    private const float Gravity = 1900f;
 
     private struct Popup
     {
@@ -25,54 +26,68 @@ public sealed class Effects
         public FontSize Size;
     }
 
-    private struct Can
+    private struct Bottle
     {
         public Vector2 Position;
         public Vector2 Velocity;
+        public float Size;
+        public float Rotation;
+        public float Spin;
         public float Life;
         public float MaxLife;
         public Color Color;
-        public float TargetY;
-        public bool Landed;
+        public float FloorY;
+        public int Bounces;
+        public bool Resting;
     }
 
     private readonly List<Popup> _popups = new();
-    private readonly List<Can> _cans = new();
+    private readonly List<Bottle> _bottles = new();
     private readonly Random _rng = new();
 
-    /// <summary>Tray flash intensity, 0..1, decaying each frame.</summary>
     public float TrayFlash { get; private set; }
 
     public void SpawnPopup(string text, Vector2 position, Color color, FontSize size = FontSize.Normal)
     {
         if (_popups.Count >= MaxPopups) return;
 
-        var drift = (float)(_rng.NextDouble() * 24.0 - 12.0);
+        var drift = (float)(_rng.NextDouble() * 22.0 - 11.0);
         _popups.Add(new Popup
         {
             Text = text,
             Position = position,
-            Velocity = new Vector2(drift, -46f),
+            Velocity = new Vector2(drift, -50f),
             Life = 0f,
-            MaxLife = size == FontSize.Large ? 1.15f : 0.85f,
+            MaxLife = size == FontSize.Large ? 1.1f : 0.8f,
             Color = color,
             Size = size
         });
     }
 
-    public void SpawnCan(Vector2 from, float trayY, Color color)
+    /// <summary>
+    /// Drops a bottle from where it sat in the rack. It falls under gravity,
+    /// bounces off the tray floor and settles there before fading.
+    /// </summary>
+    public void SpawnBottle(Rectangle from, float floorY, Color color)
     {
-        if (_cans.Count >= MaxCans) return;
+        if (_bottles.Count >= MaxBottles) return;
 
-        _cans.Add(new Can
+        var size = Math.Max(5f, from.Width);
+
+        _bottles.Add(new Bottle
         {
-            Position = from,
-            Velocity = new Vector2((float)(_rng.NextDouble() * 60.0 - 30.0), 20f),
+            Position = new Vector2(from.Center.X, from.Center.Y),
+            Velocity = new Vector2((float)(_rng.NextDouble() * 90.0 - 45.0),
+                                   (float)(_rng.NextDouble() * -60.0)),
+            Size = size,
+            Rotation = 0f,
+            Spin = (float)(_rng.NextDouble() * 10.0 - 5.0),
             Life = 0f,
-            MaxLife = 1.4f,
+            MaxLife = 2.0f,
             Color = color,
-            TargetY = trayY,
-            Landed = false
+            FloorY = floorY - size * 0.5f,
+            Bounces = 0,
+            Resting = false
         });
     }
 
@@ -93,48 +108,62 @@ public sealed class Effects
             }
 
             p.Position += p.Velocity * dt;
-            p.Velocity *= 1f - 1.6f * dt;   // ease out as it rises
+            p.Velocity *= 1f - 1.6f * dt;
             _popups[i] = p;
         }
 
-        for (var i = _cans.Count - 1; i >= 0; i--)
+        for (var i = _bottles.Count - 1; i >= 0; i--)
         {
-            var c = _cans[i];
-            c.Life += dt;
-            if (c.Life >= c.MaxLife)
+            var b = _bottles[i];
+            b.Life += dt;
+            if (b.Life >= b.MaxLife)
             {
-                _cans.RemoveAt(i);
+                _bottles.RemoveAt(i);
                 continue;
             }
 
-            if (!c.Landed)
+            if (!b.Resting)
             {
-                c.Velocity.Y += 1400f * dt;
-                c.Position += c.Velocity * dt;
+                b.Velocity.Y += Gravity * dt;
+                b.Position += b.Velocity * dt;
+                b.Rotation += b.Spin * dt;
 
-                if (c.Position.Y >= c.TargetY)
+                if (b.Position.Y >= b.FloorY)
                 {
-                    c.Position.Y = c.TargetY;
-                    c.Landed = true;
-                    c.Velocity = Vector2.Zero;
+                    b.Position.Y = b.FloorY;
+                    b.Bounces++;
+
+                    if (b.Bounces >= 2 || Math.Abs(b.Velocity.Y) < 140f)
+                    {
+                        // Settle flat in the tray rather than resting on a corner.
+                        b.Resting = true;
+                        b.Velocity = Vector2.Zero;
+                        b.Spin = 0f;
+                        b.Rotation = 0f;
+                    }
+                    else
+                    {
+                        b.Velocity.Y *= -0.42f;
+                        b.Velocity.X *= 0.6f;
+                        b.Spin *= 0.5f;
+                    }
                 }
             }
 
-            _cans[i] = c;
+            _bottles[i] = b;
         }
     }
 
     public void Draw(Ui ui)
     {
-        foreach (var c in _cans)
+        foreach (var b in _bottles)
         {
-            var t = c.Life / c.MaxLife;
-            // Cans stay solid while falling and only fade once they have landed.
-            var alpha = c.Landed ? MathHelper.Clamp(1f - (t - 0.5f) * 2.4f, 0f, 1f) : 1f;
+            // Bottles stay solid through the fall and only fade once they land.
+            var remaining = b.MaxLife - b.Life;
+            var alpha = MathHelper.Clamp(remaining / 0.5f, 0f, 1f);
             if (alpha <= 0f) continue;
 
-            var rect = new Rectangle((int)c.Position.X - 5, (int)c.Position.Y - 8, 10, 16);
-            ui.P.FillRounded(ui.Sb, rect, 3, c.Color * alpha);
+            ui.P.FillRotated(ui.Sb, b.Position, b.Size, b.Rotation, b.Color * alpha);
         }
 
         foreach (var p in _popups)
@@ -148,7 +177,7 @@ public sealed class Effects
     public void Clear()
     {
         _popups.Clear();
-        _cans.Clear();
+        _bottles.Clear();
         TrayFlash = 0f;
     }
 }

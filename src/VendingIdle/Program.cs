@@ -29,6 +29,13 @@ public sealed class LaunchOptions
     /// <summary>Start from scratch, ignoring any existing save.</summary>
     public bool FreshStart { get; private set; }
 
+    /// <summary>
+    /// Drawer state to apply on launch: "open", "closed", "left" or "right".
+    /// The drawers always start out and animate to this, so a headless capture
+    /// can catch them mid-slide.
+    /// </summary>
+    public string? Drawers { get; private set; }
+
     public static LaunchOptions Parse(string[] args)
     {
         var o = new LaunchOptions();
@@ -52,6 +59,10 @@ public sealed class LaunchOptions
 
                 case "--fresh":
                     o.FreshStart = true;
+                    break;
+
+                case "--drawers" when i + 1 < args.Length:
+                    o.Drawers = args[++i].ToLowerInvariant();
                     break;
             }
         }

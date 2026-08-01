@@ -59,18 +59,18 @@ public static class SlotInspector
             y += 26;
 
             ui.StatRow(new Rectangle(body.X, y, body.Width, 16),
-                "Value per can",
+                "Value per bottle",
                 Money.Cash(drink.Value * state.ClickValueMultiplier),
                 Theme.Money);
             y += 18;
 
             var nextUnit = state.UnitCost(slot);
             ui.StatRow(new Rectangle(body.X, y, body.Width, 16),
-                "Next can costs", Money.Cash(nextUnit));
+                "Next bottle costs", Money.Cash(nextUnit));
             y += 18;
 
             ui.StatRow(new Rectangle(body.X, y, body.Width, 16),
-                "Profit per can",
+                "Profit per bottle",
                 Money.Cash(drink.Value * state.ClickValueMultiplier - nextUnit),
                 Theme.Positive);
             y += 24;
@@ -92,13 +92,13 @@ public static class SlotInspector
 
             var cost1 = state.RestockCost(slot, Math.Min(1, room));
             if (ui.Button(buttonRect, "+1", room > 0 && state.Money >= cost1,
-                          ButtonStyle.Buy, $"Restock 1 can for {Money.Cash(cost1)}"))
+                          ButtonStyle.Buy, $"Restock 1 bottle for {Money.Cash(cost1)}"))
                 action.RestockUnits = 1;
 
             var cost5 = state.RestockCost(slot, Math.Min(5, room));
             buttonRect.X += buttonWidth + 6;
             if (ui.Button(buttonRect, "+5", room > 0 && state.Money >= cost1,
-                          ButtonStyle.Buy, $"Restock up to 5 cans, {Money.Cash(cost5)}"))
+                          ButtonStyle.Buy, $"Restock up to 5 bottles, {Money.Cash(cost5)}"))
                 action.RestockUnits = 5;
 
             var costFull = state.RestockCost(slot, room);
@@ -116,7 +116,7 @@ public static class SlotInspector
         {
             ui.P.FillRounded(ui.Sb, autoRect, 6, Theme.PanelAlt);
             ui.T.DrawIn(ui.Sb,
-                $"Automated  •  {state.AutoRestockInterval:0.##}s per can",
+                $"Automated  •  {state.AutoRestockInterval:0.##}s per bottle",
                 autoRect, Theme.Accent, FontSize.Small, Align.Center);
         }
         else
@@ -161,7 +161,7 @@ public static class SlotInspector
             if (unlocked)
             {
                 ui.T.Draw(ui.Sb,
-                    $"{Money.Cash(def.Value)} per can  •  {Money.Cash(def.RestockUnitCost)} cost",
+                    $"{Money.Cash(def.Value)} each  •  {Money.Cash(def.RestockUnitCost)} restock",
                     new Vector2(rowRect.X + 28, rowRect.Y + 21), Theme.TextDim, FontSize.Small);
             }
             else
