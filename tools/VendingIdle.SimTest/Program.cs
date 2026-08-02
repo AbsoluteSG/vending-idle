@@ -54,7 +54,7 @@ public static class Program
         DuplicatesRaiseLevelToCap();
         RarityWeightsHold();
         CollectionIsALongTail();
-        SupplyQuotaCapsDailyPacks();
+        CrateRateIsUngated();
         AurasRequireStock();
         AuraCapsHold();
         ChainCascadesAreBounded();
@@ -589,8 +589,7 @@ public static class Program
         // value tier and bought with tokens, so they are a separate pacing axis
         // and folding them in here would make this guard fire on crate luck.
         Check("five minutes does not hand out the roster", PurchaseDrinksUnlocked(state) <= 2);
-        Check($"five minutes stays inside the daily crate cap ({state.PacksOpened})",
-              state.PacksOpened <= Balance.SupplyQuotaPacksMax);
+        Console.WriteLine($"        [5 min greedy: {state.PacksOpened} crates opened]");
     }
 
     /// <summary>
@@ -651,8 +650,9 @@ public static class Program
         // The crate track should have opened by now, but only just: a half hour
         // of greedy play is meant to buy a taste of the pack roster, not the
         // combo pieces that make cascades run.
-        Check($"30 minutes opens crates without passing the daily cap ({state.PacksOpened})",
-              state.PacksOpened >= 1 && state.PacksOpened <= Balance.SupplyQuotaPacksMax);
+        Console.WriteLine($"        [30 min greedy: {state.PacksOpened} crates opened]");
+        Check($"a half hour of play opens real packs ({state.PacksOpened})",
+              state.PacksOpened >= 5);
         Check("30 minutes leaves something left to chase",
               DrinkDatabase.UnlockedFor(state).Count() < DrinkDatabase.All.Count);
 
@@ -929,10 +929,10 @@ public static class Program
                           $"legendary {legendary:0}, mythic {mythic:0}]");
 
         Check($"a common lands almost immediately ({common:0} packs)", common < 15);
-        Check($"a legendary is a long chase ({legendary:0} packs)",
-              legendary is > 700 and < 3_000);
-        Check($"a mythic is measured in thousands ({mythic:0} packs)",
-              mythic is > 4_000 and < 12_000);
+        Check($"a legendary is a long chase ({legendary:n0} packs)",
+              legendary is > 3_000 and < 10_000);
+        Check($"a mythic is measured in tens of thousands ({mythic:n0} packs)",
+              mythic is > 30_000 and < 90_000);
 
         // Empirical: distinct drinks seen, over independent collections.
         var total = DrinkDatabase.PackDrinks.Count;
@@ -941,13 +941,13 @@ public static class Program
         var nearRuns = new List<int>();
         var fullRuns = new List<int>();
 
-        for (var trial = 0; trial < 40; trial++)
+        for (var trial = 0; trial < 25; trial++)
         {
             var rng = new Random(9000 + trial);
             var seen = new HashSet<string>();
             var near = 0;
 
-            for (var pack = 1; pack <= 200_000; pack++)
+            for (var pack = 1; pack <= 2_000_000; pack++)
             {
                 seen.Add(PackSystem.Roll(rng).Id);
 
@@ -962,26 +962,24 @@ public static class Program
         fullRuns.Sort();
 
         var nearMedian = nearRuns[nearRuns.Count / 2];
-        var fullMedian = fullRuns.Count == 40 ? fullRuns[fullRuns.Count / 2] : int.MaxValue;
+        var fullMedian = fullRuns.Count == 25 ? fullRuns[fullRuns.Count / 2] : int.MaxValue;
 
-        var cap = Balance.SupplyQuotaPacksMax;
-        Console.WriteLine($"        [collection: {nearTarget}/{total} drinks in {nearMedian} packs " +
-                          $"(~{nearMedian / cap:0} days), all {total} in {fullMedian} packs " +
-                          $"(~{fullMedian / cap:0} days)]");
+        Console.WriteLine($"        [collection: {nearTarget}/{total} drinks in {nearMedian:n0} packs, " +
+                          $"all {total} in {fullMedian:n0} packs]");
 
-        Check($"a near-complete set lands around 2k packs ({nearMedian})",
-              nearMedian is > 500 and < 4_000);
-        Check($"the last drinks take thousands more ({fullMedian})",
-              fullMedian > nearMedian * 2 && fullMedian is > 4_000 and < 30_000);
-        Check("every collection completes eventually", fullRuns.Count == 40);
+        Check($"a near-complete set is thousands of packs ({nearMedian:n0})",
+              nearMedian is > 3_000 and < 20_000);
+        Check($"the last two are an order of magnitude beyond that ({fullMedian:n0})",
+              fullMedian > nearMedian * 3 && fullMedian is > 25_000 and < 150_000);
+        Check("every collection completes eventually", fullRuns.Count == 25);
     }
 
     /// <summary>
-    /// The soft cap is the whole pacing mechanism, so it is checked against the
-    /// worst case: a huge machine shaken flat out, which is the fastest anyone
-    /// can possibly earn tokens.
+    /// Crates are ungated now, so the thing worth measuring is how fast a real
+    /// machine actually produces them -- that rate is what the pull table has to
+    /// be balanced against.
     /// </summary>
-    private static void SupplyQuotaCapsDailyPacks()
+    private static void CrateRateIsUngated()
     {
         var state = GameState.NewGame();
         var rng = new Random(555);
@@ -993,27 +991,16 @@ public static class Program
             state.TryAssignDrink(i, "fizzy_water");
         }
 
-        // Maxed supply contract: the advertised ceiling.
-        state.UpgradeLevels[(int)UpgradeId.TokenRate] = 20;
-        Check($"a maxed supply contract reaches the cap ({state.SupplyQuotaPacksPerDay:0}/day)",
-              Math.Abs(state.SupplyQuotaPacksPerDay - Balance.SupplyQuotaPacksMax) < 1e-6);
-
-        state.SupplyQuota = 0.0;
-        state.Tokens = 0.0;
-
-        // One simulated day, shaking as fast as a player conceivably could, with
-        // every slot kept full so nothing throttles the bottle count.
-        const double day = Balance.SecondsPerDay;
         var opened = 0;
 
-        for (var second = 0.0; second < day; second += 1.0)
+        // An hour of steady play: five shakes a second with the shelves kept full.
+        for (var second = 0.0; second < 3600.0; second += 1.0)
         {
             foreach (var slot in state.Slots)
                 if (slot.Unlocked && slot.DrinkId is not null)
                     slot.Stock = state.SlotCapacity;
 
             for (var shake = 0; shake < 5; shake++) Simulation.Shake(state, rng);
-
             Simulation.Step(state, 1.0, rng);
 
             while (state.CanOpenPack)
@@ -1024,14 +1011,10 @@ public static class Program
             }
         }
 
-        Console.WriteLine($"        [24h of flat-out shaking: {opened} crates]");
+        Console.WriteLine($"        [1h of hard play on 12 slots: {opened} crates]");
 
-        // Tight on purpose. This is the number the whole collection curve is
-        // built on, so it should fail loudly if anything ever earns tokens
-        // around the quota rather than through it.
-        Check($"a day of perfect play lands on the cap ({opened})",
-              opened >= Balance.SupplyQuotaPacksMax * 0.9 &&
-              opened <= Balance.SupplyQuotaPacksMax * 1.1);
+        Check($"crates flow freely with no clock in the way ({opened}/h)", opened > 200);
+        Check("nothing gates a crate but tokens", state.PacksOpened == opened);
     }
 
     /// <summary>
@@ -1300,11 +1283,6 @@ public static class Program
         for (var i = 0; i < 3_000; i++)
         {
             for (var slot = 0; slot < 7; slot++) state.Slots[slot].Stock = state.SlotCapacity;
-
-            // Topped up each iteration: this is measuring the Loyalty Lemon
-            // bonus, not the supply quota, and a dry quota would drop every
-            // award to the over-quota trickle and mask it.
-            state.SupplyQuota = state.SupplyQuotaMax;
 
             var tokensBefore = state.Tokens;
             if (Simulation.Click(state, rng).Chain is not { } chain) continue;

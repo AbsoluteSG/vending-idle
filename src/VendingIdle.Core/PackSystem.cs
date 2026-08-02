@@ -26,8 +26,14 @@ public static class PackSystem
     /// the roster grows.
     ///
     /// Doubles rather than ints because the tail needs the resolution: Mythic is
-    /// around one pull in seven thousand, and integer weights cannot express that
-    /// alongside a Common without absurd numbers.
+    /// around one pull in fifty-five thousand, and integer weights cannot express
+    /// that alongside a Common without absurd numbers.
+    ///
+    /// The tail carries the whole chase now. Crates used to be rationed by a
+    /// daily quota, and when that came off, hard play went to roughly a thousand
+    /// crates an hour -- which would have emptied the old table in an afternoon.
+    /// Legendary and Mythic were cut by 4x and 8x to put the collection back in
+    /// weeks-to-months of real play at that rate.
     /// </summary>
     public static double Weight(Rarity rarity) => rarity switch
     {
@@ -35,8 +41,8 @@ public static class PackSystem
         Rarity.Uncommon => 400.0,
         Rarity.Rare => 120.0,
         Rarity.Epic => 30.0,
-        Rarity.Legendary => 4.0,
-        Rarity.Mythic => 0.85,
+        Rarity.Legendary => 1.0,
+        Rarity.Mythic => 0.105,
         _ => 0.0
     };
 

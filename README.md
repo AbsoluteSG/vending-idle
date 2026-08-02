@@ -53,26 +53,23 @@ but each carries an aura (active while loaded *and stocked*) or an on-dispense p
 Duplicates raise the effect's level. Purchase drinks stay pure value -- effects push
 on every lever except the value curve, deliberately.
 
-### Crates cost a flat price, and the collection is the long game
+### Crates cost a flat price, and nothing else gates them
 
-A crate costs **250 tokens. Always.** No escalating price, the way a pack works in
-most games that sell them. Pacing lives in two places instead, and neither is cost.
+A crate costs **250 tokens. Always.** No escalating price, no daily allowance, no
+clock. Tokens come from bottles sold, so the only thing between you and the next
+crate is running the machine -- opening packs is the loop this game is built
+around, and a timer telling you to come back tomorrow is the one thing that stops
+a loop being a loop.
 
-**A supply quota is the soft cap.** Tokens are earned through a budget that
-regenerates at a fixed crates-per-day rate -- 25/day to start, rising to **100/day**
-at maximum Supply Contract. Income past the quota earns nothing.
+An earlier pass did gate them, with a quota that regenerated at a fixed rate per
+day. It measured fine and played badly: the opening showed "3 crates left today"
+and then handed out roughly one an hour. That is the wrong shape for a game whose
+core loop is pulling drinks, so the quota is gone entirely.
 
-That last part was a finding, not a decision. It began as a 15% trickle so grinding
-past the cap was worth *less* rather than worth nothing. Measured, a twelve-slot
-machine shaken flat out opened **4,826 crates in a simulated day** against a ceiling
-of 100 -- because a trickle proportional to sales scales with the machine exactly
-like the income it is meant to be bounding. A share of a growing number cannot bound
-that number. The softness comes from the reserve instead: the quota banks while you
-are away (up to 1.5 days) and can be spent in a burst, so the cap is a daily average
-rather than an hourly wall. There is a test asserting a day of perfect play lands on
-99--100 crates.
+Measured rates with nothing in the way: a greedy half hour opens **24 crates**, and
+an hour of hard play on a twelve-slot machine opens **~1,140**.
 
-**Rarity is the real gate**, and there are no mercy mechanics anywhere. No pity
+**Rarity is the only gate**, and there are no mercy mechanics anywhere. No pity
 counter, no bad-luck protection, no history: every crate is the same independent
 roll as the first. Weights are per *drink*, so adding another Legendary makes each
 Legendary rarer.
@@ -82,18 +79,23 @@ Legendary rarer.
 | Common ×4 | 17.2% | ~6 | 10 |
 | Uncommon ×3 | 6.9% | ~15 | 9 |
 | Rare ×4 | 2.1% | ~48 | 7 |
-| Epic ×4 | 0.52% | ~194 | 5 |
-| Legendary ×3 | 0.069% | ~1,450 | 4 |
-| Mythic ×2 | 0.015% | ~6,840 | 3 |
+| Epic ×4 | 0.52% | ~193 | 5 |
+| Legendary ×3 | 0.017% | ~5,800 | 4 |
+| Mythic ×2 | 0.0018% | ~55,000 | 3 |
 
-Simulated over 40 independent collections: **18 of 20 drinks in ~2,000 packs** (about
-20 days at the cap), and **all 20 in ~7,500** (about 75 days). That number is the
-design, so it is measured in the test suite rather than assumed.
+Simulated over 25 independent collections: **18 of 20 drinks in ~6,900 packs**, and
+**all 20 in ~69,700**. Against the rates above that is a near-complete set inside a
+week of real play and a full one in weeks to months. Those numbers are the design,
+so they are measured in the test suite rather than assumed.
 
-Levels cost progressively more copies -- L copies to reach level L, so 55 for a maxed
-common -- and rarer tiers cap lower, because a Mythic held to a common's curve would
-sit at level 1 for the life of the save. A pull already at its ceiling refunds 35% of
-the crate price, so the long tail is never entirely dead pulls.
+The tail was cut hard when the quota came off -- Legendary by 4x and Mythic by 8x.
+At a thousand crates an hour the old table emptied in an afternoon; the gate had to
+move from the clock to the odds, or there would be no chase left at all.
+
+Levels cost progressively more copies -- L copies to reach level L, so 55 for a
+maxed common -- and rarer tiers cap lower, because a Mythic held to a common's
+curve would sit at level 1 for the life of the save. A pull already at its ceiling
+refunds 35% of the crate price, so the long tail is never entirely dead pulls.
 
 One consequence worth stating: cascades pay only **40% of a drink's value in cash**
 on each hop. Chains multiply bottles and bottles are money, so an unshaded hop makes

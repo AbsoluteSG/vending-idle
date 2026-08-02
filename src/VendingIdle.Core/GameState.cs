@@ -44,17 +44,6 @@ public sealed class GameState
 
     public int PacksOpened { get; set; }
 
-    /// <summary>
-    /// The soft cap, as a regenerating budget of tokens. Sales draw from it at
-    /// full rate and earn a trickle once it is dry, so the number of crates a day
-    /// can produce is bounded by how fast this refills rather than by the price.
-    ///
-    /// It banks while the game is closed (offline catch-up regenerates it), which
-    /// is what stops a night away being wasted, and it is capped at
-    /// <see cref="Balance.SupplyQuotaReserveDays"/> so it cannot be hoarded into
-    /// a burst that defeats the cap it exists to enforce.
-    /// </summary>
-    public double SupplyQuota { get; set; }
 
     /// <summary>Copies owned per pack drink id. First copy unlocks; more raise the effect level.</summary>
     public Dictionary<string, int> DrinkCopies { get; set; } = new();
@@ -139,48 +128,25 @@ public sealed class GameState
     [JsonIgnore] public int MaxChainHops =>
         Modifiers.ChainHops(UpgradeLevels[(int)UpgradeId.ChainHops]) + Auras.ChainHopBonus;
 
-    [JsonIgnore] public double TokensPerBottle => Balance.TokensPerBottle;
-
-    /// <summary>Packs per day the quota currently refills at.</summary>
-    [JsonIgnore] public double SupplyQuotaPacksPerDay =>
-        Modifiers.SupplyQuotaPacks(UpgradeLevels[(int)UpgradeId.TokenRate]);
-
-    /// <summary>Tokens per second the quota refills at.</summary>
-    [JsonIgnore] public double SupplyQuotaPerSecond =>
-        SupplyQuotaPacksPerDay * Balance.PackCost / Balance.SecondsPerDay;
-
-    /// <summary>Ceiling on banked quota.</summary>
-    [JsonIgnore] public double SupplyQuotaMax =>
-        SupplyQuotaPerSecond * Balance.SecondsPerDay * Balance.SupplyQuotaReserveDays;
+    [JsonIgnore] public double TokensPerBottle =>
+        Modifiers.TokensPerBottle(UpgradeLevels[(int)UpgradeId.TokenRate]);
 
     /// <summary>
-    /// Banks tokens through the quota. Everything that earns tokens goes through
-    /// here -- bottles, crits, chain hops -- so the cap has exactly one seam and
-    /// cannot be routed around by adding a new source later.
+    /// Banks tokens from a sale. Everything that earns them comes through here --
+    /// bottles, crits, chain hops -- so there is one seam if a limit is ever
+    /// wanted again.
     ///
-    /// Income past the quota is dropped rather than scaled down: see
-    /// <see cref="Balance.OverQuotaTokenRate"/> for why a proportional trickle
-    /// cannot bound anything it is attached to.
+    /// There is no limit now, and that is deliberate. Crates were behind a
+    /// regenerating daily quota; opening packs is the loop this game is built
+    /// around, and a clock telling you to come back tomorrow is the one thing
+    /// that stops a loop being a loop. Pacing is the pull table's job.
     /// </summary>
     public double EarnTokens(double amount)
     {
         if (amount <= 0.0) return 0.0;
 
-        var funded = Math.Min(amount, SupplyQuota);
-        var over = amount - funded;
-
-        SupplyQuota -= funded;
-
-        var earned = funded + over * Balance.OverQuotaTokenRate;
-        Tokens += earned;
-        return earned;
-    }
-
-    /// <summary>Refills the quota. Called from the same Step as everything else.</summary>
-    public void RegenerateQuota(double dt)
-    {
-        if (dt <= 0.0) return;
-        SupplyQuota = Math.Min(SupplyQuotaMax, SupplyQuota + SupplyQuotaPerSecond * dt);
+        Tokens += amount;
+        return amount;
     }
 
     [JsonIgnore] public int SlotsOwned => Slots.Count(s => s.Unlocked);
@@ -376,11 +342,6 @@ public sealed class GameState
         state.Slots[0].DrinkId = DrinkDatabase.All[0].Id;
         state.EnsureSpareRow();
 
-        // A few crates of runway. Starting at zero would make the opening earn
-        // the over-quota trickle for no reason; starting at the full reserve
-        // would hand over a day and a half of pulls before the first sale.
-        state.SupplyQuota = Balance.PackCost * Balance.StartingQuotaPacks;
-
         state.LastSavedUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         return state;
     }
@@ -421,7 +382,6 @@ public sealed class GameState
         if (Version < 3)
         {
             Tokens = Math.Min(Tokens, Balance.PackCost * 5.0);
-            SupplyQuota = Balance.PackCost * Balance.StartingQuotaPacks;
         }
 
         var carried = Slots

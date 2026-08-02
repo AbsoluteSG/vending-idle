@@ -429,7 +429,6 @@ public static class Simulation
     {
         if (dt <= 0.0) return;
 
-        state.RegenerateQuota(dt);
         TickAutoRestock(state, dt, events);
         TickCustomers(state, dt, rng, events);
     }

@@ -128,59 +128,19 @@ public static class Balance
     /// <summary>Extra tokens when a dispense crits.</summary>
     public const long CritTokenBonus = 1;
 
+    /// <summary>Extra tokens per bottle per level of the Loyalty Scheme upgrade.</summary>
+    public const double TokensPerBottlePerLevel = 0.25;
+
 
 /// <summary>
     /// Crate price. Flat, forever -- a crate costs what a crate costs, the way a
     /// pack does in every game that sells them. Pacing lives in
-    /// <see cref="SupplyQuotaPerDay"/> and in the pull table, not in the price.
+    /// the pull table, not in the price and not behind a clock.
     /// </summary>
     public const double PackCost = 250.0;
 
-    // ---- Supply quota (the soft cap) -------------------------------------
-    /// <summary>
-    /// Packs per day the quota regenerates at zero upgrades. The Supply Contract
-    /// upgrade raises this; see <see cref="SupplyQuotaPacksMax"/> for the ceiling.
-    /// </summary>
-    public const double SupplyQuotaPacksBase = 25.0;
-
-    /// <summary>
-    /// Packs per day at maximum Supply Contract -- the cap the whole economy is
-    /// built around. Perfect active play drains the quota exactly as fast as it
-    /// refills, so this is the real ceiling on how fast a collection can grow.
-    /// </summary>
-    public const double SupplyQuotaPacksMax = 100.0;
-
+    /// <summary>Seconds in a day, for rate reporting.</summary>
     public const double SecondsPerDay = 86_400.0;
-
-    /// <summary>
-    /// Crates a brand-new save opens with. A welcome, not a head start: the
-    /// starting bank is the one thing a player can spend without earning it, so
-    /// it is a handful rather than the full reserve.
-    /// </summary>
-    public const double StartingQuotaPacks = 3.0;
-
-    /// <summary>
-    /// How much unspent quota can bank, in days. Enough that a night away is not
-    /// wasted, short enough that it cannot be hoarded into a burst that defeats
-    /// the cap.
-    /// </summary>
-    public const double SupplyQuotaReserveDays = 1.5;
-
-    /// <summary>
-    /// What a sale earns once the quota is dry: nothing.
-    ///
-    /// This started as a 15% trickle so grinding past the cap was worth less
-    /// rather than worth nothing. Measured, that defeated the cap outright -- a
-    /// twelve-slot machine shaken flat out opened 4,826 crates in a simulated
-    /// day against a 100 ceiling, because a trickle proportional to sales scales
-    /// with the machine exactly like the income it is meant to be bounding.
-    ///
-    /// The softness comes from <see cref="SupplyQuotaReserveDays"/> instead: the
-    /// quota banks while you are away and can be spent in a burst, so the cap is
-    /// a daily average rather than an hourly wall. That is bounded by
-    /// construction, which a proportional share can never be.
-    /// </summary>
-    public const double OverQuotaTokenRate = 0.0;
 
     /// <summary>
     /// Fraction of the crate price refunded when a pull is already at its level

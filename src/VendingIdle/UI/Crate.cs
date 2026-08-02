@@ -185,20 +185,6 @@ public sealed class Crate
                 : affordable ? Theme.Money : Theme.TextFaint,
             FontSize.Small, Align.Center);
 
-        // The daily ceiling, and how much of today's delivery is left. A cap the
-        // player cannot see just reads as the machine quietly breaking, so the
-        // remaining quota is on screen whenever it is running low.
-        var quotaPacks = state.SupplyQuota / cost;
-        var dry = quotaPacks < 1.0;
-
-        var supply = dry
-            ? "supply dry -- restocks soon"
-            : $"{quotaPacks:0} crates left today";
-
-        ui.T.DrawIn(ui.Sb, supply,
-            new Rectangle(rect.X - 30, gauge.Bottom + 17, rect.Width + 60, 14),
-            dry ? Theme.Negative : Theme.TextFaint,
-            FontSize.Small, Align.Center);
     }
 
     private void DrawReveal(Ui ui, GameState state, Rectangle crate)
