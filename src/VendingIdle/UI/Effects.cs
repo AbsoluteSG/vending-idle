@@ -39,6 +39,7 @@ public sealed class Effects
         public float FloorY;
         public int Bounces;
         public bool Resting;
+        public float Pitch;
     }
 
     private readonly List<Popup> _popups = new();
@@ -46,6 +47,56 @@ public sealed class Effects
     private readonly Random _rng = new();
 
     public float TrayFlash { get; private set; }
+
+    /// <summary>
+    /// Furthest the camera travels from centre at full trauma. Everything drawn
+    /// shifts by up to this much, so the backdrop bleeds past the screen edge by
+    /// at least as much again (see <see cref="Backdrop"/>).
+    /// </summary>
+    public const float MaxCameraOffset = 7f;
+
+    /// <summary>How hard the camera is still shaking, 0 to 1.</summary>
+    public float Trauma { get; private set; }
+
+    private float _shakeClock;
+    private float _phaseX;
+    private float _phaseY;
+
+    /// <summary>
+    /// Kicks the camera. Trauma accumulates, so shaking again mid-shake hits
+    /// harder rather than restarting from the same place.
+    /// </summary>
+    public void Shake(float strength = 1f)
+    {
+        Trauma = MathHelper.Clamp(Trauma + strength, 0f, 1f);
+
+        // Fresh phase per impact, so two shakes in a row never trace the same
+        // path -- a repeating wobble is what makes a shake read as an animation
+        // rather than a hit.
+        _shakeClock = 0f;
+        _phaseX = (float)(_rng.NextDouble() * MathHelper.TwoPi);
+        _phaseY = (float)(_rng.NextDouble() * MathHelper.TwoPi);
+    }
+
+    /// <summary>
+    /// How far to translate the whole scene this frame. Two mismatched
+    /// frequencies so the shake never settles into a visible loop, and a squared
+    /// falloff so it decays away instead of stopping dead. Vertical travel is
+    /// kept to two thirds of horizontal: a sideways shove reads as impact, while
+    /// equal vertical bounce reads as the floor giving way.
+    /// </summary>
+    public Vector2 CameraOffset
+    {
+        get
+        {
+            if (Trauma <= 0f) return Vector2.Zero;
+
+            var falloff = Trauma * Trauma;
+            return new Vector2(
+                (float)Math.Sin(_shakeClock * 53.0 + _phaseX) * MaxCameraOffset * falloff,
+                (float)Math.Sin(_shakeClock * 37.0 + _phaseY) * MaxCameraOffset * 0.66f * falloff);
+        }
+    }
 
     public void SpawnPopup(string text, Vector2 position, Color color, FontSize size = FontSize.Normal)
     {
@@ -68,7 +119,14 @@ public sealed class Effects
     /// Drops a bottle from where it sat in the rack. It falls under gravity,
     /// bounces off the tray floor and settles there before fading.
     /// </summary>
-    public void SpawnBottle(Rectangle from, float floorY, Color color)
+    /// <summary>
+    /// Raised the moment a bottle comes to rest in the tray, with that drink's
+    /// pitch. The clink belongs on impact -- firing it when the bottle leaves the
+    /// rack would put the sound a good fraction of a second before the picture.
+    /// </summary>
+    public event Action<float>? BottleLanded;
+
+    public void SpawnBottle(Rectangle from, float floorY, Color color, float pitch = 0f)
     {
         if (_bottles.Count >= MaxBottles) return;
 
@@ -87,7 +145,8 @@ public sealed class Effects
             Color = color,
             FloorY = floorY - size.X * 0.5f,
             Bounces = 0,
-            Resting = false
+            Resting = false,
+            Pitch = pitch
         });
     }
 
@@ -96,6 +155,9 @@ public sealed class Effects
     public void Update(float dt)
     {
         TrayFlash = Math.Max(0f, TrayFlash - dt * 3.5f);
+
+        _shakeClock += dt;
+        Trauma = Math.Max(0f, Trauma - dt * 2.6f);
 
         for (var i = _popups.Count - 1; i >= 0; i--)
         {
@@ -140,6 +202,8 @@ public sealed class Effects
                         b.Velocity = Vector2.Zero;
                         b.Spin = 0f;
 
+                        BottleLanded?.Invoke(b.Pitch);
+
                         // Drinks come to rest lying on their side in the tray,
                         // which is the only way a tall bottle settles believably.
                         b.Rotation = MathHelper.PiOver2;
@@ -182,5 +246,6 @@ public sealed class Effects
         _popups.Clear();
         _bottles.Clear();
         TrayFlash = 0f;
+        Trauma = 0f;
     }
 }

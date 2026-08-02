@@ -11,7 +11,11 @@ namespace VendingIdle.Core;
 /// </summary>
 public sealed class GameState
 {
-    public const int CurrentVersion = 1;
+    /// <summary>
+    /// 2: the grid narrowed from 4 columns to 3, which invalidates every stored
+    /// slot index. <see cref="Migrate"/> re-lays version 1 saves.
+    /// </summary>
+    public const int CurrentVersion = 2;
 
     public int Version { get; set; } = CurrentVersion;
 
@@ -60,6 +64,13 @@ public sealed class GameState
     [JsonIgnore] public double AutoRestockInterval =>
         Modifiers.AutoRestockInterval(UpgradeLevels[(int)UpgradeId.AutoRestockSpeed]);
 
+    /// <summary>
+    /// Bottles a single shake takes from each stocked slot. Reads from
+    /// <see cref="Balance"/> today; this is the seam a drink effect or an upgrade
+    /// hangs off when one wants to knock out more than one per slot.
+    /// </summary>
+    [JsonIgnore] public int ShakeBottlesPerSlot => Balance.ShakeBottlesPerSlot;
+
     [JsonIgnore] public int SlotsOwned => Slots.Count(s => s.Unlocked);
 
     [JsonIgnore] public int AutoRestockersOwned => Slots.Count(s => s.HasAutoRestocker);
@@ -82,12 +93,51 @@ public sealed class GameState
     public static GameState NewGame()
     {
         var state = new GameState();
-        state.EnsureRow(0);
+        state.EnsureRow(Balance.DefaultRows - 1);
         state.Slots[0].Unlocked = true;      // bottom-left, as designed
         state.Slots[0].DrinkId = DrinkDatabase.All[0].Id;
         state.EnsureSpareRow();
         state.LastSavedUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         return state;
+    }
+
+    /// <summary>
+    /// Brings a save forward from an older layout. Slot indices are row-major, so
+    /// narrowing the grid changes what every stored index means -- read back
+    /// as-is, a version 1 save would scatter its slots across the wrong cells and
+    /// could strand them above an empty row, where the purchase rule would never
+    /// let the player reconnect them.
+    ///
+    /// Rather than guess at a geometric remap, the unlocked slots are compacted
+    /// into the bottom of the new grid in their old order. Positions are not
+    /// meaningful in themselves -- only the count, the contents, and the rule that
+    /// a slot needs one below it -- and packing from index 0 satisfies all three.
+    /// </summary>
+    public void Migrate()
+    {
+        if (Version >= CurrentVersion)
+        {
+            Version = CurrentVersion;
+            return;
+        }
+
+        var carried = Slots
+            .Where(s => s.Unlocked)
+            .OrderBy(s => s.Index)
+            .ToList();
+
+        Slots = new List<Slot>();
+        EnsureRow(Math.Max(Balance.DefaultRows, (carried.Count + Balance.Columns - 1) / Balance.Columns));
+
+        for (var i = 0; i < carried.Count; i++)
+        {
+            Slots[i].Unlocked = true;
+            Slots[i].DrinkId = carried[i].DrinkId;
+            Slots[i].Stock = carried[i].Stock;
+            Slots[i].HasAutoRestocker = carried[i].HasAutoRestocker;
+        }
+
+        Version = CurrentVersion;
     }
 
     /// <summary>Allocates rows up to and including <paramref name="row"/>.</summary>
@@ -122,19 +172,22 @@ public sealed class GameState
     // Player actions
     // ---------------------------------------------------------------------
 
-    /// <summary>A slot is buyable on the bottom row, or once the row below has any slot.</summary>
-    public bool IsSlotPurchasable(Slot slot)
+    /// <summary>True when any slot on the given row has been bought.</summary>
+    public bool IsRowOccupied(int row)
     {
-        if (slot.Unlocked) return false;
-        if (slot.Row == 0) return true;
+        var baseIndex = row * Balance.Columns;
+        if (row < 0 || baseIndex + Balance.Columns > Slots.Count) return false;
 
-        var belowBase = (slot.Row - 1) * Balance.Columns;
         for (var c = 0; c < Balance.Columns; c++)
-            if (Slots[belowBase + c].Unlocked)
+            if (Slots[baseIndex + c].Unlocked)
                 return true;
 
         return false;
     }
+
+    /// <summary>A slot is buyable on the bottom row, or once the row below has any slot.</summary>
+    public bool IsSlotPurchasable(Slot slot) =>
+        !slot.Unlocked && (slot.Row == 0 || IsRowOccupied(slot.Row - 1));
 
     public bool TryBuySlot(int index)
     {
@@ -286,6 +339,7 @@ public sealed class GameState
             Slots[0].Unlocked = true;
         }
 
+        EnsureRow(Balance.DefaultRows - 1);
         EnsureSpareRow();
         Money = Math.Max(0.0, Money);
         TotalEarned = Math.Max(Money, TotalEarned);

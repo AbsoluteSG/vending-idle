@@ -27,7 +27,8 @@ public static class DrinkDatabase
             Value = 1.0,
             RestockUnitCost = 0.34,
             RestockGrowth = 1.0,
-            UnlockAtEarned = 0.0
+            UnlockAtEarned = 0.0,
+            SoundPitch = 0.38
         },
         new()
         {
@@ -38,7 +39,8 @@ public static class DrinkDatabase
             Value = 3.2,
             RestockUnitCost = 1.15,
             RestockGrowth = 1.005,
-            UnlockAtEarned = 250.0
+            UnlockAtEarned = 2_000.0,
+            SoundPitch = 0.16
         },
         new()
         {
@@ -49,7 +51,8 @@ public static class DrinkDatabase
             Value = 10.0,
             RestockUnitCost = 3.9,
             RestockGrowth = 1.012,
-            UnlockAtEarned = 5_000.0
+            UnlockAtEarned = 90_000.0,
+            SoundPitch = 0.0
         },
         new()
         {
@@ -60,7 +63,8 @@ public static class DrinkDatabase
             Value = 34.0,
             RestockUnitCost = 14.0,
             RestockGrowth = 1.02,
-            UnlockAtEarned = 100_000.0
+            UnlockAtEarned = 5_000_000.0,
+            SoundPitch = -0.14
         },
         new()
         {
@@ -71,7 +75,8 @@ public static class DrinkDatabase
             Value = 125.0,
             RestockUnitCost = 54.0,
             RestockGrowth = 1.03,
-            UnlockAtEarned = 5_000_000.0
+            UnlockAtEarned = 100_000_000.0,
+            SoundPitch = -0.28
         },
         new()
         {
@@ -82,7 +87,8 @@ public static class DrinkDatabase
             Value = 520.0,
             RestockUnitCost = 235.0,
             RestockGrowth = 1.04,
-            UnlockAtEarned = 250_000_000.0
+            UnlockAtEarned = 1_500_000_000.0,
+            SoundPitch = -0.42
         }
     };
 

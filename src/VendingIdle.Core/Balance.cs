@@ -8,11 +8,26 @@ namespace VendingIdle.Core;
 public static class Balance
 {
     // ---- Grid ------------------------------------------------------------
-    public const int Columns = 4;
+    public const int Columns = 3;
+
+    /// <summary>
+    /// Rows the cabinet ships with. The glass is sized to show exactly this many,
+    /// so a new machine reads as a machine with empty shelves rather than as a
+    /// single slot floating in a void. Rows beyond this are still allocated on
+    /// demand as you expand upward, and then the grid scrolls.
+    /// </summary>
+    public const int DefaultRows = 4;
+
+    /// <summary>
+    /// What <see cref="Columns"/> was in save version 1. Slot indices are
+    /// row-major, so the grid width is baked into every index on disk and an old
+    /// save has to be re-laid rather than read straight back.
+    /// </summary>
+    public const int LegacyColumnsV1 = 4;
 
     /// <summary>Cost of the Nth slot (N = slots already owned).</summary>
-    public const double SlotBaseCost = 25.0;
-    public const double SlotCostGrowth = 1.55;
+    public const double SlotBaseCost = 45.0;
+    public const double SlotCostGrowth = 1.78;
 
     // ---- Clicking --------------------------------------------------------
     /// <summary>
@@ -21,6 +36,13 @@ public static class Balance
     /// shaking the machine competes with actually stocking it.
     /// </summary>
     public const double SpareChange = 0.1;
+
+    /// <summary>
+    /// Bottles a shake knocks out of each stocked slot. The default is one from
+    /// every slot at once -- a shake rattles the whole cabinet, so every loaded
+    /// coil gives something up, unlike a customer's single purchase.
+    /// </summary>
+    public const int ShakeBottlesPerSlot = 1;
 
     public const double CritMultiplier = 2.0;
     public const double CritChanceBase = 0.02;

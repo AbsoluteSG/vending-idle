@@ -54,9 +54,19 @@ public sealed partial class Ui
 
         if (hover && tooltip is not null) SetTooltip(tooltip, rect);
 
-        if (!enabled || !hover || !MousePressed) return false;
+        if (!hover || !MousePressed) return false;
 
+        // A disabled button still swallows the click and reports the refusal --
+        // it used to let the click fall straight through to whatever sat behind
+        // it, and there was no way for the caller to know it had been pressed.
         ClickConsumed = true;
+
+        if (!enabled)
+        {
+            ClickDenied = true;
+            return false;
+        }
+
         return true;
     }
 

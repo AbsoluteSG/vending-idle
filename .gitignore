@@ -10,3 +10,4 @@ obj/
 Content/bin/
 Content/obj/
 *.mgstats
+.DS_Store

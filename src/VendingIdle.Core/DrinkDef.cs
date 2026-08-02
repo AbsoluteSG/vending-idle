@@ -56,6 +56,18 @@ public sealed class DrinkDef
     /// <summary>Reserved for the pack/duplicate system that is out of scope for v1.</summary>
     public string? EffectId { get; init; }
 
+    /// <summary>
+    /// How this drink sounds landing in the tray, as a pitch shift in the -1..1
+    /// range the audio layer takes (one octave either way). Every drink plays the
+    /// same clink sample at its own pitch rather than carrying its own file: six
+    /// near-identical glass hits would be six assets to source and keep in tune,
+    /// and pitch alone already separates them.
+    ///
+    /// Light drinks ring high, premium ones land heavy and low, so the roster
+    /// filling out is something you can hear and not only read.
+    /// </summary>
+    public double SoundPitch { get; init; }
+
     /// <summary>Cost of one unit when the slot currently holds <paramref name="currentStock"/>.</summary>
     public double UnitCostAt(int currentStock, int capacity) =>
         RestockUnitCost * Math.Pow(StepRatio(capacity), currentStock);

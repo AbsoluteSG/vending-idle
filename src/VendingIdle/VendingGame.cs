@@ -13,9 +13,17 @@ public sealed class VendingGame : Game, ISimEvents
     private const int ScreenWidth = 1280;
     private const int ScreenHeight = 720;
     private const int MachineWidth = 640;
-    private const int MachineHeight = 556;
-    private const int MachineTop = 62;
     private const int DrawerWidth = 286;
+
+    /// <summary>
+    /// World Y of the floor line. The cabinet's base is bolted here and every row
+    /// added grows it upward from this point, so the tray never moves and the
+    /// camera does the travelling.
+    /// </summary>
+    private const int FloorY = 640;
+
+    /// <summary>Gap left above the crown when the camera is panned all the way up.</summary>
+    private const int CrownMargin = 40;
 
     private readonly GraphicsDeviceManager _graphics;
     private readonly LaunchOptions _options;
@@ -29,6 +37,7 @@ public sealed class VendingGame : Game, ISimEvents
     private GameState _state = null!;
     private readonly MachineView _machine = new();
     private readonly Effects _fx = new();
+    private readonly Sfx _sfx = new();
 
     // Both start tucked away: the cabinet is the scene, and a menu only exists
     // once you have asked for it.
@@ -51,6 +60,14 @@ public sealed class VendingGame : Game, ISimEvents
 
     private KeyboardState _prevKeyboard;
     private int _framesDrawn;
+
+    /// <summary>
+    /// How far the camera has climbed the cabinet, in pixels. Zero is resting on
+    /// the tray. Smoothed toward <see cref="_panTarget"/> so the wheel glides
+    /// rather than snapping.
+    /// </summary>
+    private float _pan;
+    private float _panTarget;
 
     public VendingGame(LaunchOptions options)
     {
@@ -95,6 +112,14 @@ public sealed class VendingGame : Game, ISimEvents
             Content.Load<SpriteFont>("Fonts/UiFont"),
             Content.Load<SpriteFont>("Fonts/UiFontLarge"));
         _ui = new Ui(GraphicsDevice, _prims, _text);
+
+        if (_options.Muted) _sfx.Mute();
+        _sfx.Load(Content);
+
+        // The clink is owned by the effect, not the click: a bottle sounds when
+        // it actually lands, which is a few hundred milliseconds after the shake
+        // that threw it and later still if it bounces twice.
+        _fx.BottleLanded += _sfx.Bottle;
     }
 
     /// <summary>
@@ -157,7 +182,13 @@ public sealed class VendingGame : Game, ISimEvents
             _smoothedIncome += (instantaneous - _smoothedIncome) * alpha;
         }
 
+        _sfx.BeginFrame();
         _fx.Update((float)dt);
+
+        // Ease the camera toward where the wheel asked for. Exponential, so it
+        // arrives quickly without ever quite snapping.
+        _panTarget = MathHelper.Clamp(_panTarget, 0f, MaxPan());
+        _pan += (_panTarget - _pan) * (1f - (float)Math.Exp(-dt * 14.0));
         _upgradeDrawer.Update((float)dt);
         _inspectorDrawer.Update((float)dt);
 
@@ -184,10 +215,13 @@ public sealed class VendingGame : Game, ISimEvents
         var keyboard = Keyboard.GetState();
 
         if (WasPressed(keyboard, Keys.Space) || WasPressed(keyboard, Keys.Enter))
-            PlayerVend();
+            PlayerShake();
 
         if (WasPressed(keyboard, Keys.R))
-            _state.RestockAll();
+        {
+            if (_state.RestockAll() > 0) _sfx.Purchase();
+            else _sfx.Denied();
+        }
 
         if (WasPressed(keyboard, Keys.S))
             SaveSystem.Save(_state, _options.SavePath);
@@ -209,10 +243,34 @@ public sealed class VendingGame : Game, ISimEvents
     private bool WasPressed(KeyboardState now, Keys key) =>
         now.IsKeyDown(key) && !_prevKeyboard.IsKeyDown(key);
 
-    private void PlayerVend()
+    /// <summary>Machine bounds in world space: base on the floor, growing upward.</summary>
+    private Rectangle MachineBounds()
     {
-        var result = Simulation.Click(_state, _rng);
-        OnDispense(result, fromCustomer: false);
+        var height = MachineView.HeightFor(_state.RowCount);
+        return new Rectangle((ScreenWidth - MachineWidth) / 2, FloorY - height,
+                             MachineWidth, height);
+    }
+
+    /// <summary>
+    /// Furthest the camera can climb: enough to bring the crown into view, and no
+    /// further. Zero while the whole cabinet already fits on screen.
+    /// </summary>
+    private float MaxPan()
+    {
+        var top = MachineBounds().Y;
+        return Math.Max(0f, CrownMargin - top);
+    }
+
+    private void PlayerShake()
+    {
+        var shake = Simulation.Shake(_state, _rng);
+
+        // A loaded cabinet has weight behind it; an empty one just rattles.
+        _fx.Shake(shake.SpareChange ? 0.45f : 0.85f);
+        _sfx.Shake(paidOut: !shake.SpareChange);
+
+        foreach (var drop in shake.Drops)
+            OnDispense(drop, fromCustomer: false);
     }
 
     // ---------------------------------------------------------------------
@@ -241,10 +299,12 @@ public sealed class VendingGame : Game, ISimEvents
             // Drinks leave from the front of the row, so ask for them by position
             // from the front -- the row shows proportional fill, and an absolute
             // stock index would fall off the end of it.
+            var pitch = drink is not null ? (float)drink.SoundPitch : 0f;
+
             for (var i = 0; i < result.Cans; i++)
             {
                 if (_machine.TryGetDispensedBottle(result.SlotIndex, i, out var from))
-                    _fx.SpawnBottle(from, _machine.TrayFloorY, bottleColor);
+                    _fx.SpawnBottle(from, _machine.TrayFloorY, bottleColor, pitch);
             }
         }
 
@@ -266,20 +326,25 @@ public sealed class VendingGame : Game, ISimEvents
         GraphicsDevice.Clear(Theme.Background);
 
         var screen = new Rectangle(0, 0, ScreenWidth, ScreenHeight);
-        _ui.BeginFrame(_sb, Mouse.GetState(), screen);
-        _ui.Begin();
 
-        var machineBounds = new Rectangle((ScreenWidth - MachineWidth) / 2, MachineTop,
-                                          MachineWidth, MachineHeight);
-        var floorY = machineBounds.Bottom;
+        // Two cameras in one. The pan climbs the cabinet and input follows it, so
+        // a click lands on the compartment you can see. The shake is layered on
+        // top and input deliberately ignores it, so a rattle cannot jog a click
+        // off the button you aimed at.
+        _ui.BeginFrame(_sb, Mouse.GetState(), screen,
+                       new Vector2(0f, _pan), _fx.CameraOffset);
+
+        var machineBounds = MachineBounds();
+        var pan = (int)Math.Round(_pan);
 
         var drawerTop = 24;
         var drawerHeight = ScreenHeight - drawerTop * 2;
         var upgradeBounds = _upgradeDrawer.Bounds(screen, drawerTop, drawerHeight);
         var inspectorBounds = _inspectorDrawer.Bounds(screen, drawerTop, drawerHeight);
 
-        // Room first, so the cabinet has somewhere to stand.
-        Backdrop.Draw(_ui, screen, machineBounds, floorY);
+        // The wall sits behind everything and does not travel with the camera.
+        _ui.Begin(Space.Screen);
+        Backdrop.DrawWall(_ui, screen, machineBounds, pan);
 
         // Drawers are hit-tested before the cabinet so a click on an open menu
         // can never fall through to the delivery flap behind it.
@@ -294,6 +359,10 @@ public sealed class VendingGame : Game, ISimEvents
         if (_upgradeDrawer.DrawTab(_ui, upgradeBounds, screen)) _upgradeDrawer.Toggle();
         if (_inspectorDrawer.DrawTab(_ui, inspectorBounds, screen)) _inspectorDrawer.Toggle();
 
+        // Everything from here rides the camera.
+        _ui.Begin(Space.World);
+        Backdrop.DrawFloor(_ui, screen, machineBounds, FloorY, pan);
+
         var machineAction = _machine.Draw(_ui, _state, machineBounds, _fx, _elapsed, _smoothedIncome);
 
         // Effects are clipped to the cabinet so falling drinks cannot spill out
@@ -302,9 +371,12 @@ public sealed class VendingGame : Game, ISimEvents
         _fx.Draw(_ui);
         _ui.PopClip();
 
-        DrawHint(machineBounds);
+        HandleCameraScroll(machineBounds);
 
-        if (_offlineReport is not null) DrawOfflineToast(machineBounds);
+        _ui.Begin(Space.Screen);
+        DrawHint();
+
+        if (_offlineReport is not null) DrawOfflineToast(screen);
 
         _ui.DrawTooltip(screen);
         _ui.End();
@@ -323,7 +395,17 @@ public sealed class VendingGame : Game, ISimEvents
 
     private void ApplyActions(InspectorAction inspector, UpgradeId? upgrade, MachineAction machine)
     {
-        if (machine.RestockAll) _state.RestockAll();
+        // A click on a greyed-out button never reaches the state at all, so the
+        // refusal has to come from the widget layer.
+        var bought = false;
+        var refused = _ui.ClickDenied;
+
+        if (machine.RestockAll)
+        {
+            if (_state.RestockAll() > 0) bought = true;
+            else refused = true;
+        }
+
         if (machine.Save) SaveSystem.Save(_state, _options.SavePath);
 
         if (inspector.AssignDrinkId is not null)
@@ -337,23 +419,43 @@ public sealed class VendingGame : Game, ISimEvents
             var slot = _state.SlotAt(_machine.SelectedSlot);
             if (slot is not null)
             {
-                if (inspector.RestockUnits < 0) _state.RestockToFull(slot);
-                else _state.Restock(slot, inspector.RestockUnits);
+                var added = inspector.RestockUnits < 0
+                    ? _state.RestockToFull(slot)
+                    : _state.Restock(slot, inspector.RestockUnits);
+
+                if (added > 0) bought = true;
+                else refused = true;
             }
         }
 
         if (inspector.BuyAutoRestocker)
-            _state.TryBuyAutoRestocker(_machine.SelectedSlot);
+        {
+            if (_state.TryBuyAutoRestocker(_machine.SelectedSlot)) bought = true;
+            else refused = true;
+        }
 
         if (upgrade is not null)
-            _state.TryBuyUpgrade(upgrade.Value);
+        {
+            if (_state.TryBuyUpgrade(upgrade.Value)) bought = true;
+            else refused = true;
+        }
 
         // Touching a slot is what you do right before you want to act on it, so
         // the inspector comes out to meet you.
-        if (machine.BuySlot >= 0 && _state.TryBuySlot(machine.BuySlot))
+        if (machine.BuySlot >= 0)
         {
-            _machine.SelectedSlot = machine.BuySlot;
-            _inspectorDrawer.Open();
+            if (_state.TryBuySlot(machine.BuySlot))
+            {
+                bought = true;
+                _machine.SelectedSlot = machine.BuySlot;
+                _inspectorDrawer.Open();
+            }
+            else
+            {
+                // The price ticket stays clickable when it is unaffordable, so
+                // this is the main way a player hears the refusal.
+                refused = true;
+            }
         }
 
         if (machine.SelectSlot >= 0)
@@ -362,19 +464,44 @@ public sealed class VendingGame : Game, ISimEvents
             _inspectorDrawer.Open();
         }
 
-        if (machine.Vend) PlayerVend();
+        if (machine.Shake) PlayerShake();
+
+        // One cue per frame, and success wins: a "Restock all" that fills three
+        // slots and runs dry on the fourth is a purchase, not a refusal.
+        if (bought) _sfx.Purchase();
+        else if (refused) _sfx.Denied();
     }
 
     /// <summary>
-    /// Contextual nudges, printed on the wall above the cabinet -- the one place
-    /// that is always empty, and it keeps tutorial text off the machine itself.
+    /// The wheel drives the camera whenever the pointer is over the cabinet or the
+    /// room beside it, but not over an open drawer -- those scroll their own lists.
     /// </summary>
-    private void DrawHint(Rectangle machineBounds)
+    private void HandleCameraScroll(Rectangle machineBounds)
+    {
+        if (_ui.WheelDelta == 0) return;
+
+        var overDrawer =
+            (_upgradeDrawer.Visible && _upgradeDrawer.Bounds(_ui.Screen, 24, ScreenHeight - 48)
+                .Contains(_ui.MouseScreen)) ||
+            (_inspectorDrawer.Visible && _inspectorDrawer.Bounds(_ui.Screen, 24, ScreenHeight - 48)
+                .Contains(_ui.MouseScreen));
+
+        if (overDrawer) return;
+
+        _panTarget = MathHelper.Clamp(_panTarget + _ui.WheelDelta * 0.6f, 0f, MaxPan());
+    }
+
+    /// <summary>
+    /// Contextual nudges, printed near the top of the wall. Screen space: the hint
+    /// is a note to the player, not a sign hung on a machine that may be scrolled
+    /// a thousand pixels away.
+    /// </summary>
+    private void DrawHint()
     {
         var hint = CurrentHint();
         if (hint is null) return;
 
-        var rect = new Rectangle(machineBounds.X, machineBounds.Y - 34, machineBounds.Width, 20);
+        var rect = new Rectangle(0, 22, ScreenWidth, 20);
         _ui.T.DrawIn(_sb, hint, rect, Theme.TextDim, FontSize.Small, Align.Center);
     }
 
@@ -400,14 +527,14 @@ public sealed class VendingGame : Game, ISimEvents
         return "Out of stock - restock to keep the money coming.";
     }
 
-    private void DrawOfflineToast(Rectangle machineBounds)
+    private void DrawOfflineToast(Rectangle screen)
     {
         var report = _offlineReport!;
 
-        // Sits over the machine rather than the screen centre, so it never covers
-        // the inspector or the upgrade list.
-        var width = Math.Min(440, machineBounds.Width - 24);
-        var rect = new Rectangle(machineBounds.Center.X - width / 2, machineBounds.Y + 60, width, 96);
+        // Screen space, between the two drawers, so it neither covers them nor
+        // rides away when the camera climbs the cabinet.
+        const int width = 440;
+        var rect = new Rectangle(screen.Center.X - width / 2, 110, width, 96);
 
         _prims.FillRounded(_sb, rect, 10, Theme.PanelAlt);
         _prims.OutlineRounded(_sb, rect, 10, Theme.Accent);

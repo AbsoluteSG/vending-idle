@@ -48,8 +48,8 @@ public static class UpgradeDatabase
             Id = UpgradeId.ClickValue,
             Name = "Premium Pricing",
             Description = "Every bottle dispensed is worth more.",
-            BaseCost = 40,
-            Growth = 1.3,
+            BaseCost = 55,
+            Growth = 1.38,
             EffectText = l => "x" + Modifiers.ClickValueMultiplier(l).ToString("0.##", CultureInfo.InvariantCulture) + " value"
         },
         new()
@@ -67,8 +67,8 @@ public static class UpgradeDatabase
             Id = UpgradeId.Customers,
             Name = "Hire Customer",
             Description = "Customers click the machine for you. They drink real stock.",
-            BaseCost = 60,
-            Growth = 1.38,
+            BaseCost = 85,
+            Growth = 1.46,
             EffectText = l => l + (l == 1 ? " customer" : " customers")
         },
         new()

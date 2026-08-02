@@ -36,6 +36,9 @@ public sealed class LaunchOptions
     /// </summary>
     public string? Drawers { get; private set; }
 
+    /// <summary>Start silent. Implied by <see cref="ScreenshotPath"/>.</summary>
+    public bool Muted { get; private set; }
+
     public static LaunchOptions Parse(string[] args)
     {
         var o = new LaunchOptions();
@@ -64,8 +67,16 @@ public sealed class LaunchOptions
                 case "--drawers" when i + 1 < args.Length:
                     o.Drawers = args[++i].ToLowerInvariant();
                     break;
+
+                case "--mute":
+                    o.Muted = true;
+                    break;
             }
         }
+
+        // A headless capture has nothing to listen to it, and may be running
+        // somewhere with no audio device at all.
+        if (o.ScreenshotPath is not null) o.Muted = true;
 
         return o;
     }

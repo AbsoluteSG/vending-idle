@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace VendingIdle.Core;
 
@@ -12,6 +13,25 @@ public readonly struct ClickResult
     public int Cans { get; init; }
     public bool Crit { get; init; }
     public bool SpareChange { get; init; }
+}
+
+/// <summary>
+/// What one shake of the cabinet produced. <see cref="Drops"/> holds one entry per
+/// slot that gave something up, so the presentation layer can drop a bottle out of
+/// each compartment rather than guessing where they came from. It is never empty:
+/// a shake of a dry machine reports a single spare-change drop.
+/// </summary>
+public readonly struct ShakeResult
+{
+    public IReadOnlyList<ClickResult> Drops { get; init; }
+    public double Payout { get; init; }
+    public int Cans { get; init; }
+
+    /// <summary>True when nothing was stocked and the machine paid coins instead.</summary>
+    public bool SpareChange { get; init; }
+
+    /// <summary>How many slots gave up a bottle -- 0 on a spare-change shake.</summary>
+    public int SlotsHit => SpareChange ? 0 : Drops.Count;
 }
 
 /// <summary>Optional hook for the presentation layer (floating text, particles, sound).</summary>
@@ -43,43 +63,110 @@ public static class Simulation
     {
         state.TotalClicks++;
 
-        var crit = rng.NextDouble() < state.CritChance;
-        var critMult = crit ? Balance.CritMultiplier : 1.0;
-        if (crit) state.TotalCrits++;
-
         var slot = NextStockedSlot(state);
+        if (slot is null) return PaySpareChange(state, rng);
 
-        if (slot is null)
+        var result = DispenseFrom(state, slot, rng, units: 1);
+        AdvanceCursor(state, slot.Index);
+        return result;
+    }
+
+    /// <summary>
+    /// The player's own interaction with the cabinet. A shake rattles every coil
+    /// at once, so each stocked slot gives up <see cref="GameState.ShakeBottlesPerSlot"/>
+    /// bottles -- not just the one the round-robin cursor happens to be pointing at.
+    /// Customers still buy one drink at a time through <see cref="Click"/>; only the
+    /// player shakes.
+    /// </summary>
+    /// <param name="bottlesPerSlot">
+    /// Overrides the state's default, for effects that knock out more than one.
+    /// </param>
+    public static ShakeResult Shake(GameState state, Random rng, int? bottlesPerSlot = null)
+    {
+        state.TotalClicks++;
+
+        var units = Math.Max(1, bottlesPerSlot ?? state.ShakeBottlesPerSlot);
+
+        var drops = new List<ClickResult>();
+        var payout = 0.0;
+        var cans = 0;
+
+        foreach (var slot in state.Slots)
         {
-            // Nothing loaded anywhere: you shake the machine and get coins back.
-            var change = Balance.SpareChange * state.ClickValueMultiplier * critMult;
-            state.Money += change;
-            state.TotalEarned += change;
+            if (!slot.CanDispense) continue;
 
-            return new ClickResult
+            var drop = DispenseFrom(state, slot, rng, units);
+            drops.Add(drop);
+            payout += drop.Payout;
+            cans += drop.Cans;
+        }
+
+        if (drops.Count == 0)
+        {
+            var change = PaySpareChange(state, rng);
+            return new ShakeResult
             {
-                SlotIndex = -1,
-                DrinkId = null,
-                Payout = change,
+                Drops = new[] { change },
+                Payout = change.Payout,
                 Cans = 0,
-                Crit = crit,
                 SpareChange = true
             };
         }
 
+        return new ShakeResult
+        {
+            Drops = drops,
+            Payout = payout,
+            Cans = cans,
+            SpareChange = false
+        };
+    }
+
+    /// <summary>Nothing loaded anywhere: you shake the machine and get coins back.</summary>
+    private static ClickResult PaySpareChange(GameState state, Random rng)
+    {
+        var crit = RollCrit(state, rng);
+        var change = Balance.SpareChange * state.ClickValueMultiplier
+                     * (crit ? Balance.CritMultiplier : 1.0);
+
+        state.Money += change;
+        state.TotalEarned += change;
+
+        return new ClickResult
+        {
+            SlotIndex = -1,
+            DrinkId = null,
+            Payout = change,
+            Cans = 0,
+            Crit = crit,
+            SpareChange = true
+        };
+    }
+
+    /// <summary>
+    /// Takes up to <paramref name="units"/> bottles out of one slot and banks them.
+    /// Deliberately does not touch <see cref="GameState.TotalClicks"/>: a shake is
+    /// one player action however many slots it empties.
+    /// </summary>
+    private static ClickResult DispenseFrom(GameState state, Slot slot, Random rng, int units)
+    {
         var drink = slot.Drink!;
 
-        // A crit always pays double; it takes a second can with it when the coil
-        // has one to give.
-        var cans = crit && slot.Stock >= 2 ? 2 : 1;
+        var crit = RollCrit(state, rng);
+        var critMult = crit ? Balance.CritMultiplier : 1.0;
+
+        // A crit always pays double; it takes an extra can with it when the coil
+        // still has one to give beyond what was asked for.
+        var sold = Math.Min(units, slot.Stock);
+        var bonus = crit && slot.Stock > sold ? 1 : 0;
+        var cans = sold + bonus;
+
         slot.Stock -= cans;
 
-        var payout = drink.Value * state.ClickValueMultiplier * critMult;
+        var payout = drink.Value * state.ClickValueMultiplier * sold * critMult;
         state.Money += payout;
         state.TotalEarned += payout;
         state.TotalCansSold += cans;
-
-        AdvanceCursor(state, slot.Index);
 
         return new ClickResult
         {
@@ -90,6 +177,13 @@ public static class Simulation
             Crit = crit,
             SpareChange = false
         };
+    }
+
+    private static bool RollCrit(GameState state, Random rng)
+    {
+        var crit = rng.NextDouble() < state.CritChance;
+        if (crit) state.TotalCrits++;
+        return crit;
     }
 
     /// <summary>Round-robin scan from the cursor, so the machine empties evenly.</summary>

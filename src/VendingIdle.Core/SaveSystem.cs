@@ -12,11 +12,32 @@ public static class SaveSystem
         IncludeFields = false
     };
 
-    /// <summary>%LOCALAPPDATA%\VendingIdle\save.json (or ~/.local/share on Linux).</summary>
-    public static string DefaultDirectory =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "VendingIdle");
+    /// <summary>
+    /// Where the save lives, per platform convention:
+    /// <list type="bullet">
+    /// <item>Windows: %LOCALAPPDATA%\VendingIdle</item>
+    /// <item>macOS: ~/Library/Application Support/VendingIdle</item>
+    /// <item>Linux: ~/.local/share/VendingIdle</item>
+    /// </list>
+    /// macOS is special-cased because .NET maps LocalApplicationData to
+    /// ~/.local/share there, which is a Linux convention no Mac user expects.
+    /// </summary>
+    public static string DefaultDirectory
+    {
+        get
+        {
+            if (OperatingSystem.IsMacOS())
+            {
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                if (!string.IsNullOrEmpty(home))
+                    return Path.Combine(home, "Library", "Application Support", "VendingIdle");
+            }
+
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VendingIdle");
+        }
+    }
 
     public static string DefaultPath => Path.Combine(DefaultDirectory, "save.json");
 
@@ -45,6 +66,9 @@ public static class SaveSystem
             var state = JsonSerializer.Deserialize<GameState>(File.ReadAllText(path), Options);
             if (state is null) return null;
 
+            // Migrate before normalizing: Normalize reads slot indices against the
+            // current grid width, which an older save's indices predate.
+            state.Migrate();
             state.Normalize();
             return state;
         }

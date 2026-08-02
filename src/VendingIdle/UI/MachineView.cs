@@ -9,7 +9,7 @@ namespace VendingIdle.UI;
 /// <summary>What the player did to the machine this frame (at most one thing).</summary>
 public struct MachineAction
 {
-    public bool Vend;
+    public bool Shake;
     public bool RestockAll;
     public bool Save;
     public int BuySlot;
@@ -39,28 +39,44 @@ public readonly struct DrinkDisplay
 }
 
 /// <summary>
-/// The cabinet: a physical object standing in the room, not a UI panel. A branded
-/// header with an LED till readout, a glass front with drinks hanging free in their
-/// compartments, a service column down the side, and a delivery flap at the bottom.
+/// The cabinet: a physical object standing in the room, not a UI panel.
+///
+/// It is built in three parts, because it grows. The <b>base</b> is a fixed height
+/// bolted to the floor and holds everything you need constantly -- the till
+/// readout, the service controls and the delivery tray. The <b>body</b> is the
+/// glass and the service column, and it is the part that stretches: every row of
+/// compartments makes the machine taller. The <b>crown</b> caps it off with the
+/// branding, and on a tall machine it ends up far above the top of the screen,
+/// which is the point. You scroll up to look at what you have built.
+///
+/// Nothing here scrolls internally. The compartments are laid out at their true
+/// height above the floor and the camera pans to reach them, so a bottle from the
+/// top row genuinely falls the whole way down into the tray.
 /// </summary>
 public sealed class MachineView
 {
-    private const int PlateHeight = 56;
-    private const int TrayHeight = 78;
-    private const int PlinthHeight = 18;
-    private const int ColumnWidth = 122;
     private const int Bezel = 12;
     private const int Gap = 6;
 
-    private const int CellPad = 7;
-    private const int CellHeight = 96;
+    private const int CrownHeight = 58;
+    private const int TillHeight = 44;
+    private const int TrayHeight = 78;
+    private const int PlinthHeight = 18;
+    private const int ColumnWidth = 122;
 
-    private const int DrinkWidth = 28;
-    private const int DrinkHeight = 52;
+    // Sized so that Balance.DefaultRows rows fill the shipped cabinet:
+    // 4 * (86 + 7) + 7 = 379.
+    private const int CellPad = 7;
+    private const int CellHeight = 86;
+
+    private const int DrinkWidth = 32;
+    private const int DrinkHeight = 46;
     private const int MaxStackLayers = 4;
 
+    /// <summary>Room the service column needs for its controls, stacked from the floor up.</summary>
+    private const int ControlStackHeight = 196;
+
     public int SelectedSlot { get; set; }
-    public float Scroll { get; private set; }
 
     private Rectangle _glass;
     private Rectangle _tray;
@@ -72,6 +88,17 @@ public sealed class MachineView
 
     /// <summary>Where a dropped drink comes to rest.</summary>
     public float TrayFloorY => _tray.Bottom - 16;
+
+    public static int GlassHeightFor(int rows) => rows * (CellHeight + CellPad) + CellPad;
+
+    /// <summary>
+    /// Total height of a cabinet with this many rows. The caller uses it to place
+    /// the machine's top edge relative to a fixed floor line, which is what makes
+    /// the machine grow upward rather than the floor sink.
+    /// </summary>
+    public static int HeightFor(int rows) =>
+        Bezel + CrownHeight + Gap + GlassHeightFor(rows) + Gap
+        + TillHeight + Gap + TrayHeight + PlinthHeight;
 
     public bool TryGetCellRect(int index, out Rectangle rect) =>
         _cellRects.TryGetValue(index, out rect);
@@ -96,23 +123,25 @@ public sealed class MachineView
 
         DrawChassis(ui, bounds);
 
-        var plate = new Rectangle(bounds.X + Bezel, bounds.Y + Bezel,
-                                  bounds.Width - Bezel * 2, PlateHeight);
-        DrawBrandPlate(ui, state, plate, incomePerSecond);
+        var innerWidth = bounds.Width - Bezel * 2;
 
-        _glass = new Rectangle(
-            bounds.X + Bezel,
-            plate.Bottom + Gap,
-            bounds.Width - Bezel * 2 - ColumnWidth - Gap,
-            bounds.Height - Bezel - PlateHeight - Gap - TrayHeight - Gap - PlinthHeight);
+        var crown = new Rectangle(bounds.X + Bezel, bounds.Y + Bezel, innerWidth, CrownHeight);
+        DrawCrown(ui, crown);
 
-        var column = new Rectangle(_glass.Right + Gap, _glass.Y, ColumnWidth, _glass.Height);
+        var glassHeight = GlassHeightFor(state.RowCount);
 
-        _tray = new Rectangle(_glass.X, _glass.Bottom + Gap, _glass.Width, TrayHeight);
+        _glass = new Rectangle(bounds.X + Bezel, crown.Bottom + Gap,
+                               innerWidth - ColumnWidth - Gap, glassHeight);
+
+        var column = new Rectangle(_glass.Right + Gap, _glass.Y, ColumnWidth, glassHeight);
+
+        var till = new Rectangle(bounds.X + Bezel, _glass.Bottom + Gap, innerWidth, TillHeight);
+        _tray = new Rectangle(bounds.X + Bezel, till.Bottom + Gap, innerWidth, TrayHeight);
 
         DrawShelves(ui, state, now, ref action);
         DrawGlassFront(ui);
         DrawServiceColumn(ui, state, column, now, ref action);
+        DrawTill(ui, state, till, incomePerSecond);
         DrawDeliveryFlap(ui, state, fx, ref action);
 
         return action;
@@ -137,24 +166,39 @@ public sealed class MachineView
         ui.P.OutlineRounded(ui.Sb, bounds, 12, Theme.ChassisTrim);
     }
 
-    private static void DrawBrandPlate(Ui ui, GameState state, Rectangle plate, double incomePerSecond)
+    /// <summary>
+    /// The branding, at the very top of the cabinet. On a machine of any height
+    /// this is off-screen until you pan up to it -- it is the thing you have been
+    /// building toward, not something you need to read.
+    /// </summary>
+    private static void DrawCrown(Ui ui, Rectangle crown)
     {
-        ui.P.FillRounded(ui.Sb, plate, 6, Theme.ChassisDark);
+        ui.P.FillRounded(ui.Sb, crown, 6, Theme.ChassisDark);
 
-        ui.T.Draw(ui.Sb, "VEND-O-MATIC", new Vector2(plate.X + 14, plate.Y + 10),
-                  Theme.ChassisTrim, FontSize.Normal);
+        ui.T.DrawIn(ui.Sb, "VEND-O-MATIC",
+            new Rectangle(crown.X, crown.Y + 6, crown.Width, 30),
+            Theme.ChassisTrim, FontSize.Large, Align.Center);
 
-        ui.T.Draw(ui.Sb, "SIPHON GAMES", new Vector2(plate.X + 14, plate.Y + 31),
-                  Theme.ChassisLight, FontSize.Small);
+        ui.T.DrawIn(ui.Sb, "SIPHON GAMES",
+            new Rectangle(crown.X, crown.Y + 38, crown.Width, 14),
+            Theme.ChassisLight, FontSize.Small, Align.Center);
+    }
 
-        // The till readout is part of the machine rather than a HUD element.
-        var led = new Rectangle(plate.Right - 246, plate.Y + 5, 236, plate.Height - 10);
+    /// <summary>
+    /// The till, on the fascia just above the tray. It used to live up on the brand
+    /// plate, which was fine on a fixed-height box and useless the moment the
+    /// cabinet grew past the screen -- your money has to be where your eyes are.
+    /// </summary>
+    private static void DrawTill(Ui ui, GameState state, Rectangle till, double incomePerSecond)
+    {
+        ui.P.FillRounded(ui.Sb, till, 6, Theme.ChassisDark);
+
+        var led = new Rectangle(till.X + 8, till.Y + 5, till.Width - 16, till.Height - 10);
         ui.P.FillRounded(ui.Sb, led, 4, Theme.Led);
         ui.P.OutlineRounded(ui.Sb, led, 4, Theme.ChassisDark);
 
-        ui.T.DrawIn(ui.Sb, Money.Cash(state.Money),
-            new Rectangle(led.X, led.Y + 2, led.Width, 26),
-            Theme.LedText, FontSize.Large, Align.Right, padX: 10);
+        ui.T.DrawIn(ui.Sb, Money.Cash(state.Money), led,
+            Theme.LedText, FontSize.Large, Align.Right, padX: 12);
 
         var potential = Simulation.PotentialIncomePerSecond(state);
         var starved = potential > 0 && incomePerSecond < potential * 0.6;
@@ -163,9 +207,8 @@ public sealed class MachineView
             ? $"{Money.FormatRate(incomePerSecond)} of {Money.FormatRate(potential)}"
             : "no customers yet";
 
-        ui.T.DrawIn(ui.Sb, rate,
-            new Rectangle(led.X, led.Bottom - 18, led.Width, 14),
-            starved ? Theme.Negative : Theme.LedDim, FontSize.Small, Align.Right, padX: 10);
+        ui.T.DrawIn(ui.Sb, rate, led,
+            starved ? Theme.Negative : Theme.LedDim, FontSize.Small, Align.Left, padX: 12);
     }
 
     /// <summary>Glazing drawn over the stock: an edge, and a diagonal sheen.</summary>
@@ -188,15 +231,6 @@ public sealed class MachineView
     {
         ui.P.FillRounded(ui.Sb, _glass, 6, Theme.Glass);
 
-        var rows = state.RowCount;
-        var contentHeight = rows * (CellHeight + CellPad) + CellPad;
-        var maxScroll = Math.Max(0f, contentHeight - _glass.Height);
-
-        if (ui.Hovering(_glass) && ui.WheelDelta != 0)
-            Scroll += ui.WheelDelta * 0.35f;
-
-        Scroll = MathHelper.Clamp(Scroll, 0f, maxScroll);
-
         var columns = Balance.Columns;
         var cellWidth = (_glass.Width - CellPad * (columns + 1)) / columns;
 
@@ -204,13 +238,18 @@ public sealed class MachineView
         _displays.Clear();
         ui.PushClip(_glass);
 
+        var visible = ui.VisibleWorld;
         var mouseInGlass = _glass.Contains(ui.Mouse);
 
-        for (var row = 0; row < rows; row++)
+        for (var row = 0; row < state.RowCount; row++)
         {
-            var y = _glass.Bottom - CellPad - (row + 1) * CellHeight - row * CellPad + (int)Scroll;
+            // Rows are placed at their true height above the tray. Nothing is
+            // offset by a scroll value -- the camera does that job now.
+            var y = _glass.Bottom - CellPad - (row + 1) * CellHeight - row * CellPad;
 
-            if (y > _glass.Bottom || y + CellHeight < _glass.Y) continue;
+            // Cull against what the camera can actually see. A hundred-row machine
+            // is mostly off-screen at any given moment.
+            if (y > visible.Bottom || y + CellHeight < visible.Y) continue;
 
             // The shelf the row's drinks stand on, spanning the whole cabinet.
             var shelfY = y + CellHeight - 3;
@@ -234,16 +273,6 @@ public sealed class MachineView
         }
 
         ui.PopClip();
-
-        if (Scroll < maxScroll - 0.5f)
-            ui.T.DrawIn(ui.Sb, "more above",
-                new Rectangle(_glass.X, _glass.Y + 3, _glass.Width, 14),
-                Theme.TextFaint, FontSize.Small, Align.Center);
-
-        if (Scroll > 0.5f)
-            ui.T.DrawIn(ui.Sb, "more below",
-                new Rectangle(_glass.X, _glass.Bottom - 17, _glass.Width, 14),
-                Theme.TextFaint, FontSize.Small, Align.Center);
     }
 
     /// <summary>
@@ -288,7 +317,7 @@ public sealed class MachineView
             if (purchasable)
             {
                 // A price ticket hanging where the drinks would be.
-                var ticket = new Rectangle(cell.Center.X - 34, cell.Y + 22, 68, 30);
+                var ticket = new Rectangle(cell.Center.X - 38, cell.Y + 20, 76, 30);
                 ui.P.FillRounded(ui.Sb, ticket, 4,
                     hovered && affordable ? Theme.BuyHover : Theme.ShelfShade);
                 ui.P.OutlineRounded(ui.Sb, ticket, 4,
@@ -420,64 +449,18 @@ public sealed class MachineView
     // Service column and delivery flap
     // ---------------------------------------------------------------------
 
+    /// <summary>
+    /// The column runs the full height of the glass, but its controls are stacked
+    /// up from the bottom rather than down from the top. On a tall machine that
+    /// keeps RESTOCK and SAVE beside the tray where your hand already is, and
+    /// leaves the rest of the column as cooling vents -- which is exactly what a
+    /// twenty-foot vending machine ought to look like.
+    /// </summary>
     private static void DrawServiceColumn(Ui ui, GameState state, Rectangle column, double now,
                                           ref MachineAction action)
     {
         ui.P.FillRounded(ui.Sb, column, 6, Theme.ChassisDark);
         ui.P.OutlineRounded(ui.Sb, column, 6, Theme.ChassisTrim);
-
-        var y = column.Y + 10;
-
-        // Coin slot.
-        var coin = new Rectangle(column.X + 22, y, column.Width - 44, 8);
-        ui.P.FillRounded(ui.Sb, coin, 3, Theme.Tray);
-        ui.P.Fill(ui.Sb, new Rectangle(coin.X, coin.Y - 2, coin.Width, 2), Theme.ChassisTrim);
-        y += 20;
-
-        ui.T.DrawIn(ui.Sb, "INSERT COIN",
-            new Rectangle(column.X, y, column.Width, 12), Theme.ChassisLight,
-            FontSize.Small, Align.Center);
-        y += 20;
-
-        // Keypad. Decorative, but it is most of what makes the column read as a
-        // machine front rather than a sidebar.
-        const int keyW = 22;
-        const int keyH = 16;
-        var padX = column.X + (column.Width - (keyW * 3 + 8)) / 2;
-
-        for (var r = 0; r < 3; r++)
-        for (var c = 0; c < 3; c++)
-        {
-            var key = new Rectangle(padX + c * (keyW + 4), y + r * (keyH + 4), keyW, keyH);
-            ui.P.FillRounded(ui.Sb, key, 3, Theme.Chassis);
-            ui.P.Fill(ui.Sb, new Rectangle(key.X + 1, key.Y + 1, key.Width - 2, 1),
-                      Theme.ChassisLight);
-        }
-
-        y += 3 * (keyH + 4) + 14;
-
-        // Service buttons, styled as part of the fascia.
-        var restock = new Rectangle(column.X + 8, y, column.Width - 16, 28);
-        if (ui.Button(restock, "RESTOCK", CanRestockAnything(state), ButtonStyle.Buy,
-                      "Fill every loaded slot as far as your money goes", FontSize.Small))
-            action.RestockAll = true;
-
-        y += 34;
-
-        var save = new Rectangle(column.X + 8, y, column.Width - 16, 24);
-        if (ui.Button(save, "SAVE", true, ButtonStyle.Subtle, "Save now", FontSize.Small))
-            action.Save = true;
-
-        // Cooling vent: pure texture, but empty fascia reads as an unfinished panel.
-        var ventY = y + 34;
-        var ventBottom = column.Bottom - 34;
-        for (var vy = ventY; vy < ventBottom; vy += 7)
-        {
-            ui.P.FillRounded(ui.Sb, new Rectangle(column.X + 16, vy, column.Width - 32, 3), 1,
-                             Theme.Chassis);
-            ui.P.Fill(ui.Sb, new Rectangle(column.X + 16, vy + 3, column.Width - 32, 1),
-                      Theme.ChassisDark);
-        }
 
         // Status lamp, low on the fascia.
         var lampY = column.Bottom - 26;
@@ -490,6 +473,63 @@ public sealed class MachineView
         ui.T.Draw(ui.Sb, lit ? "READY" : "EMPTY",
                   new Vector2(column.X + 26, lampY - 3),
                   lit ? Theme.ChassisLight : Theme.Negative, FontSize.Small);
+
+        var save = new Rectangle(column.X + 8, column.Bottom - 56, column.Width - 16, 24);
+        if (ui.Button(save, "SAVE", true, ButtonStyle.Subtle, "Save now", FontSize.Small))
+            action.Save = true;
+
+        var restock = new Rectangle(column.X + 8, column.Bottom - 90, column.Width - 16, 28);
+        if (ui.Button(restock, "RESTOCK", CanRestockAnything(state), ButtonStyle.Buy,
+                      "Fill every loaded slot as far as your money goes", FontSize.Small))
+            action.RestockAll = true;
+
+        // Keypad. Decorative, but it is most of what makes the column read as a
+        // machine front rather than a sidebar.
+        const int keyW = 22;
+        const int keyH = 16;
+        var padX = column.X + (column.Width - (keyW * 3 + 8)) / 2;
+        var padY = column.Bottom - 156;
+
+        for (var r = 0; r < 3; r++)
+        for (var c = 0; c < 3; c++)
+        {
+            var key = new Rectangle(padX + c * (keyW + 4), padY + r * (keyH + 4), keyW, keyH);
+            ui.P.FillRounded(ui.Sb, key, 3, Theme.Chassis);
+            ui.P.Fill(ui.Sb, new Rectangle(key.X + 1, key.Y + 1, key.Width - 2, 1),
+                      Theme.ChassisLight);
+        }
+
+        ui.T.DrawIn(ui.Sb, "INSERT COIN",
+            new Rectangle(column.X, column.Bottom - 174, column.Width, 12), Theme.ChassisLight,
+            FontSize.Small, Align.Center);
+
+        var coin = new Rectangle(column.X + 22, column.Bottom - 188, column.Width - 44, 8);
+        ui.P.FillRounded(ui.Sb, coin, 3, Theme.Tray);
+        ui.P.Fill(ui.Sb, new Rectangle(coin.X, coin.Y - 2, coin.Width, 2), Theme.ChassisTrim);
+
+        // Cooling vents fill everything above the controls, however tall that is.
+        var ventTop = column.Y + 8;
+        var ventBottom = column.Bottom - ControlStackHeight;
+
+        var visible = ui.VisibleWorld;
+        for (var vy = ventTop; vy < ventBottom; vy += 7)
+        {
+            if (vy < visible.Y - 8 || vy > visible.Bottom + 8) continue;
+
+            ui.P.FillRounded(ui.Sb, new Rectangle(column.X + 16, vy, column.Width - 32, 3), 1,
+                             Theme.Chassis);
+            ui.P.Fill(ui.Sb, new Rectangle(column.X + 16, vy + 3, column.Width - 32, 1),
+                      Theme.ChassisDark);
+        }
+    }
+
+    private static int CountStockedSlots(GameState state)
+    {
+        var count = 0;
+        foreach (var slot in state.Slots)
+            if (slot.CanDispense)
+                count++;
+        return count;
     }
 
     private static bool CanRestockAnything(GameState state)
@@ -527,15 +567,26 @@ public sealed class MachineView
         ui.P.Fill(ui.Sb, new Rectangle(flap.X + 6, flap.Y + 2, flap.Width - 12, 1),
                   Theme.ChassisTrim);
 
-        ui.T.DrawIn(ui.Sb, state.TotalStock > 0 ? "PUSH" : "SHAKE", flap,
-                    Theme.Text, FontSize.Small, Align.Center);
+        ui.T.DrawIn(ui.Sb, "SHAKE", flap, Theme.Text, FontSize.Small, Align.Center);
 
         ui.P.OutlineRounded(ui.Sb, _tray, 6, Theme.ChassisDark);
+
+        if (hovered)
+        {
+            var loaded = CountStockedSlots(state);
+            ui.SetTooltip(
+                loaded > 0
+                    ? $"Shake out {state.ShakeBottlesPerSlot} bottle" +
+                      (state.ShakeBottlesPerSlot == 1 ? "" : "s") +
+                      $" from each of {loaded} stocked slot" + (loaded == 1 ? "" : "s")
+                    : "Nothing loaded - shake the machine for spare change",
+                _tray);
+        }
 
         if (hovered && ui.MousePressed)
         {
             ui.ClickConsumed = true;
-            action.Vend = true;
+            action.Shake = true;
         }
     }
 }
