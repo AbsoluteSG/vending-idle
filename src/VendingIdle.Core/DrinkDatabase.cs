@@ -128,8 +128,8 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.ChainDispense,
             Color = 0xF2D43D,
-            Value = 2.2,
-            RestockUnitCost = 0.9,
+            Value = 0.95,
+            RestockUnitCost = 0.4,
             RestockGrowth = 1.0,
             SoundPitch = 0.30
         },
@@ -141,8 +141,8 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.RestockDiscountAura,
             Color = 0x9A7B5B,
-            Value = 2.0,
-            RestockUnitCost = 0.8,
+            Value = 0.9,
+            RestockUnitCost = 0.38,
             RestockGrowth = 1.0,
             SoundPitch = 0.24
         },
@@ -154,8 +154,8 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.StockPreserve,
             Color = 0x2E86DE,
-            Value = 6.0,
-            RestockUnitCost = 2.6,
+            Value = 2.7,
+            RestockUnitCost = 1.15,
             RestockGrowth = 1.01,
             SoundPitch = 0.08
         },
@@ -167,8 +167,8 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.CustomerSpeedAura,
             Color = 0xD4A017,
-            Value = 7.0,
-            RestockUnitCost = 3.0,
+            Value = 2.9,
+            RestockUnitCost = 1.25,
             RestockGrowth = 1.01,
             SoundPitch = 0.04
         },
@@ -180,8 +180,8 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.CritAura,
             Color = 0xE45FE8,
-            Value = 20.0,
-            RestockUnitCost = 9.0,
+            Value = 8.4,
+            RestockUnitCost = 3.4,
             RestockGrowth = 1.02,
             SoundPitch = -0.20
         },
@@ -193,8 +193,8 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.CourierDrop,
             Color = 0x1ABC9C,
-            Value = 22.0,
-            RestockUnitCost = 10.0,
+            Value = 8.8,
+            RestockUnitCost = 3.6,
             RestockGrowth = 1.02,
             SoundPitch = -0.22
         },
@@ -212,8 +212,8 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.ChainExtendAura,
             Color = 0xE67E22,
-            Value = 26.0,
-            RestockUnitCost = 12.0,
+            Value = 16.0,
+            RestockUnitCost = 6.6,
             RestockGrowth = 1.02,
             SoundPitch = -0.18
         },
@@ -225,8 +225,8 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.SparkChain,
             Color = 0xA3D94F,
-            Value = 2.6,
-            RestockUnitCost = 1.0,
+            Value = 1.0,
+            RestockUnitCost = 0.42,
             RestockGrowth = 1.0,
             SoundPitch = 0.27
         },
@@ -238,8 +238,8 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.DoubleDrop,
             Color = 0x5DADE2,
-            Value = 2.4,
-            RestockUnitCost = 0.95,
+            Value = 0.95,
+            RestockUnitCost = 0.4,
             RestockGrowth = 1.0,
             SoundPitch = 0.21
         },
@@ -251,8 +251,8 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.ChainCritAura,
             Color = 0xF15BB5,
-            Value = 21.0,
-            RestockUnitCost = 9.5,
+            Value = 8.5,
+            RestockUnitCost = 3.5,
             RestockGrowth = 1.02,
             SoundPitch = -0.24
         },
@@ -264,8 +264,8 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.ChainTokenAura,
             Color = 0xF4E04D,
-            Value = 6.5,
-            RestockUnitCost = 2.8,
+            Value = 2.8,
+            RestockUnitCost = 1.2,
             RestockGrowth = 1.01,
             SoundPitch = 0.06
         },
@@ -277,10 +277,120 @@ public static class DrinkDatabase
             Source = DrinkSource.Pack,
             Effect = EffectKind.ChainPreserveAura,
             Color = 0x9B8AFB,
-            Value = 20.0,
-            RestockUnitCost = 9.0,
+            Value = 8.2,
+            RestockUnitCost = 3.3,
             RestockGrowth = 1.02,
             SoundPitch = -0.19
+        },
+
+        // ---- The tail ----------------------------------------------------
+        // Epics upward are the chase. Each one is a chain piece strong enough to
+        // reshape a deck, which is the only thing that justifies pull rates this
+        // steep -- a Mythic is roughly one crate in seven thousand and there is
+        // no pity anywhere, so it has to be worth the wait on sight.
+        new()
+        {
+            Id = "splice_soda",
+            Name = "Splice Soda",
+            Rarity = Rarity.Epic,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.ChainExtendAura,
+            Color = 0xFF8A5B,
+            Value = 15.5,
+            RestockUnitCost = 6.4,
+            RestockGrowth = 1.02,
+            SoundPitch = -0.16
+        },
+        new()
+        {
+            Id = "kick_start",
+            Name = "Kick Start",
+            Rarity = Rarity.Epic,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.SparkChain,
+            Color = 0xC8F04A,
+            Value = 15.0,
+            RestockUnitCost = 6.2,
+            RestockGrowth = 1.02,
+            SoundPitch = -0.12
+        },
+        new()
+        {
+            Id = "double_dutch",
+            Name = "Double Dutch",
+            Rarity = Rarity.Epic,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.DoubleDrop,
+            Color = 0x4FD1C5,
+            Value = 16.5,
+            RestockUnitCost = 6.8,
+            RestockGrowth = 1.02,
+            SoundPitch = -0.15
+        },
+        new()
+        {
+            Id = "circuit_cider",
+            Name = "Circuit Cider",
+            Rarity = Rarity.Legendary,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.ChainCritAura,
+            Color = 0xFF4D9D,
+            Value = 30.0,
+            RestockUnitCost = 12.5,
+            RestockGrowth = 1.03,
+            SoundPitch = -0.31
+        },
+        new()
+        {
+            Id = "cascade_cordial",
+            Name = "Cascade Cordial",
+            Rarity = Rarity.Legendary,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.ChainPreserveAura,
+            Color = 0x7B6CF6,
+            Value = 29.0,
+            RestockUnitCost = 12.0,
+            RestockGrowth = 1.03,
+            SoundPitch = -0.33
+        },
+        new()
+        {
+            Id = "vault_vintage",
+            Name = "Vault Vintage",
+            Rarity = Rarity.Legendary,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.ChainTokenAura,
+            Color = 0xE8C547,
+            Value = 31.0,
+            RestockUnitCost = 12.8,
+            RestockGrowth = 1.03,
+            SoundPitch = -0.29
+        },
+        new()
+        {
+            Id = "perpetual_punch",
+            Name = "Perpetual Punch",
+            Rarity = Rarity.Mythic,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.ChainExtendAura,
+            Color = 0xFF2E63,
+            Value = 110.0,
+            RestockUnitCost = 46.0,
+            RestockGrowth = 1.035,
+            SoundPitch = -0.46
+        },
+        new()
+        {
+            Id = "midas_mixer",
+            Name = "Midas Mixer",
+            Rarity = Rarity.Mythic,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.CritAura,
+            Color = 0xFFD700,
+            Value = 108.0,
+            RestockUnitCost = 45.0,
+            RestockGrowth = 1.035,
+            SoundPitch = -0.48
         }
     };
 

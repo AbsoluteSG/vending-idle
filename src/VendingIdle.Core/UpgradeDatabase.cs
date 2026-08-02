@@ -141,13 +141,13 @@ public static class UpgradeDatabase
         new()
         {
             Id = UpgradeId.TokenRate,
-            Name = "Loyalty Scheme",
-            Description = "Bottles earn more crate tokens.",
+            Name = "Supply Contract",
+            Description = "Your supplier delivers crate stock faster, every day.",
             BaseCost = 1_200,
             Growth = 1.55,
             MaxLevel = 20,
-            EffectText = l => Modifiers.TokensPerBottle(l)
-                                  .ToString("0.##", CultureInfo.InvariantCulture) + " tk per bottle"
+            EffectText = l => Modifiers.SupplyQuotaPacks(l)
+                                  .ToString("0.#", CultureInfo.InvariantCulture) + " crates/day"
         }
     };
 
@@ -195,6 +195,17 @@ public static class Modifiers
     public static int ChainHops(int level) =>
         Balance.ChainHopsBase + Balance.ChainHopsPerLevel * level;
 
-    public static double TokensPerBottle(int level) =>
-        Balance.TokensPerBottle + Balance.TokensPerBottlePerLevel * level;
+    /// <summary>
+    /// Crates per day the supply quota refills at. Linear from the base to the
+    /// cap across the upgrade's levels, so the advertised ceiling is reached
+    /// exactly at max level rather than approached asymptotically.
+    /// </summary>
+    public static double SupplyQuotaPacks(int level)
+    {
+        const int MaxLevel = 20;
+
+        var t = Math.Clamp(level / (double)MaxLevel, 0.0, 1.0);
+        return Balance.SupplyQuotaPacksBase +
+               (Balance.SupplyQuotaPacksMax - Balance.SupplyQuotaPacksBase) * t;
+    }
 }

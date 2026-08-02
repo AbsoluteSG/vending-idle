@@ -2,13 +2,19 @@ using System;
 
 namespace VendingIdle.Core;
 
+/// <summary>
+/// Pull tier. The roster is deliberately long-tailed: the top two tiers are
+/// measured in thousands of packs, not hundreds, and there is no pity timer
+/// anywhere -- a Mythic is a geometric distribution and nothing nudges it.
+/// </summary>
 public enum Rarity
 {
     Common,
     Uncommon,
     Rare,
     Epic,
-    Legendary
+    Legendary,
+    Mythic
 }
 
 /// <summary>How a drink is obtained.</summary>
@@ -67,6 +73,13 @@ public sealed class DrinkDef
 
     /// <summary>The pack drink's effect. Null for purchase drinks -- they are pure value.</summary>
     public EffectKind? Effect { get; init; }
+
+    /// <summary>
+    /// Level ceiling for this drink's tier. Rarer drinks cap lower because they
+    /// are pulled less often: a Mythic held to a common's 55-copy curve would sit
+    /// at level 1 for the life of the save.
+    /// </summary>
+    public int MaxEffectLevel => Balance.MaxLevelFor(Rarity);
 
     /// <summary>
     /// How this drink sounds landing in the tray, as a pitch shift in the -1..1

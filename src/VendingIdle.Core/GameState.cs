@@ -18,7 +18,7 @@ public sealed class GameState
     /// a save without them deserializes to empty, and defaulting IS the
     /// migration (see the crate section of <see cref="Normalize"/>).
     /// </summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     public int Version { get; set; } = CurrentVersion;
 
@@ -43,6 +43,18 @@ public sealed class GameState
     public double Tokens { get; set; }
 
     public int PacksOpened { get; set; }
+
+    /// <summary>
+    /// The soft cap, as a regenerating budget of tokens. Sales draw from it at
+    /// full rate and earn a trickle once it is dry, so the number of crates a day
+    /// can produce is bounded by how fast this refills rather than by the price.
+    ///
+    /// It banks while the game is closed (offline catch-up regenerates it), which
+    /// is what stops a night away being wasted, and it is capped at
+    /// <see cref="Balance.SupplyQuotaReserveDays"/> so it cannot be hoarded into
+    /// a burst that defeats the cap it exists to enforce.
+    /// </summary>
+    public double SupplyQuota { get; set; }
 
     /// <summary>Copies owned per pack drink id. First copy unlocks; more raise the effect level.</summary>
     public Dictionary<string, int> DrinkCopies { get; set; } = new();
@@ -127,8 +139,49 @@ public sealed class GameState
     [JsonIgnore] public int MaxChainHops =>
         Modifiers.ChainHops(UpgradeLevels[(int)UpgradeId.ChainHops]) + Auras.ChainHopBonus;
 
-    [JsonIgnore] public double TokensPerBottle =>
-        Modifiers.TokensPerBottle(UpgradeLevels[(int)UpgradeId.TokenRate]);
+    [JsonIgnore] public double TokensPerBottle => Balance.TokensPerBottle;
+
+    /// <summary>Packs per day the quota currently refills at.</summary>
+    [JsonIgnore] public double SupplyQuotaPacksPerDay =>
+        Modifiers.SupplyQuotaPacks(UpgradeLevels[(int)UpgradeId.TokenRate]);
+
+    /// <summary>Tokens per second the quota refills at.</summary>
+    [JsonIgnore] public double SupplyQuotaPerSecond =>
+        SupplyQuotaPacksPerDay * Balance.PackCost / Balance.SecondsPerDay;
+
+    /// <summary>Ceiling on banked quota.</summary>
+    [JsonIgnore] public double SupplyQuotaMax =>
+        SupplyQuotaPerSecond * Balance.SecondsPerDay * Balance.SupplyQuotaReserveDays;
+
+    /// <summary>
+    /// Banks tokens through the quota. Everything that earns tokens goes through
+    /// here -- bottles, crits, chain hops -- so the cap has exactly one seam and
+    /// cannot be routed around by adding a new source later.
+    ///
+    /// Income past the quota is dropped rather than scaled down: see
+    /// <see cref="Balance.OverQuotaTokenRate"/> for why a proportional trickle
+    /// cannot bound anything it is attached to.
+    /// </summary>
+    public double EarnTokens(double amount)
+    {
+        if (amount <= 0.0) return 0.0;
+
+        var funded = Math.Min(amount, SupplyQuota);
+        var over = amount - funded;
+
+        SupplyQuota -= funded;
+
+        var earned = funded + over * Balance.OverQuotaTokenRate;
+        Tokens += earned;
+        return earned;
+    }
+
+    /// <summary>Refills the quota. Called from the same Step as everything else.</summary>
+    public void RegenerateQuota(double dt)
+    {
+        if (dt <= 0.0) return;
+        SupplyQuota = Math.Min(SupplyQuotaMax, SupplyQuota + SupplyQuotaPerSecond * dt);
+    }
 
     [JsonIgnore] public int SlotsOwned => Slots.Count(s => s.Unlocked);
 
@@ -145,8 +198,11 @@ public sealed class GameState
 
     [JsonIgnore] public int TotalStock => Slots.Sum(s => s.Stock);
 
-    [JsonIgnore] public double NextPackCost =>
-        Balance.Cost(Balance.PackBaseCost, Balance.PackCostGrowth, PacksOpened);
+    /// <summary>
+    /// Flat, forever. Kept as a property rather than inlining the constant so
+    /// the UI and the crate keep one thing to read.
+    /// </summary>
+    [JsonIgnore] public double NextPackCost => Balance.PackCost;
 
     /// <summary>Blocked while a rolled drink is still bobbing above the crate.</summary>
     [JsonIgnore] public bool CanOpenPack =>
@@ -271,9 +327,23 @@ public sealed class GameState
     public int CopiesOf(string id) =>
         DrinkCopies.TryGetValue(id, out var n) ? n : 0;
 
-    /// <summary>Effect level from duplicate copies, capped. 0 means no effect.</summary>
-    public int EffectLevelOf(DrinkDef drink) =>
-        drink.Effect is null ? 0 : Math.Clamp(CopiesOf(drink.Id), 0, Balance.EffectLevelMax);
+    /// <summary>
+    /// Effect level from duplicate copies. Levels cost progressively more copies
+    /// (L copies to reach level L, so 55 for a maxed common), and the ceiling is
+    /// the drink's own tier cap.
+    /// </summary>
+    public int EffectLevelOf(DrinkDef drink)
+    {
+        if (drink.Effect is null) return 0;
+
+        var copies = CopiesOf(drink.Id);
+        var max = drink.MaxEffectLevel;
+
+        var level = 0;
+        while (level < max && copies >= Balance.CopiesForLevel(level + 1)) level++;
+
+        return level;
+    }
 
     // ---------------------------------------------------------------------
     // Construction
@@ -286,6 +356,12 @@ public sealed class GameState
         state.Slots[0].Unlocked = true;      // bottom-left, as designed
         state.Slots[0].DrinkId = DrinkDatabase.All[0].Id;
         state.EnsureSpareRow();
+
+        // A few crates of runway. Starting at zero would make the opening earn
+        // the over-quota trickle for no reason; starting at the full reserve
+        // would hand over a day and a half of pulls before the first sale.
+        state.SupplyQuota = Balance.PackCost * Balance.StartingQuotaPacks;
+
         state.LastSavedUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         return state;
     }
@@ -315,6 +391,18 @@ public sealed class GameState
         {
             Version = CurrentVersion;
             return;
+        }
+
+        // Version 3 made the crate price flat and put the pacing in a quota.
+        // A balance banked against the old escalating price (which reached tens
+        // of thousands of tokens) would buy a wall of crates at the new flat 250,
+        // so it is clamped to a few crates' worth rather than carried across --
+        // the collection is the long game now, and handing over a hundred pulls
+        // on upgrade would skip the part that was just built.
+        if (Version < 3)
+        {
+            Tokens = Math.Min(Tokens, Balance.PackCost * 5.0);
+            SupplyQuota = Balance.PackCost * Balance.StartingQuotaPacks;
         }
 
         var carried = Slots
@@ -531,7 +619,7 @@ public sealed class GameState
     {
         if (!CanOpenPack) return null;
 
-        Tokens -= NextPackCost;
+        Tokens -= Balance.PackCost;
         PacksOpened++;
         PendingRevealId = PackSystem.Roll(rng).Id;
         return PendingRevealId;
@@ -548,12 +636,26 @@ public sealed class GameState
         var before = CopiesOf(id);
         DrinkCopies[id] = before + 1;
 
+        var drink = DrinkDatabase.Get(id);
+        var level = drink is null ? 0 : EffectLevelOf(drink);
+        var atMax = drink is not null && level >= drink.MaxEffectLevel;
+
+        // A pull that cannot raise the level any further hands part of the crate
+        // price back, so the long tail of the collection is never entirely dead.
+        var refund = 0.0;
+        if (atMax)
+        {
+            refund = Balance.PackCost * Balance.DuplicateRefund;
+            Tokens += refund;
+        }
+
         return new PackRedeem
         {
             DrinkId = id,
             WasNew = before == 0,
-            Level = Math.Min(before + 1, Balance.EffectLevelMax),
-            AtMax = before + 1 > Balance.EffectLevelMax
+            Level = level,
+            AtMax = atMax,
+            Refund = refund
         };
     }
 

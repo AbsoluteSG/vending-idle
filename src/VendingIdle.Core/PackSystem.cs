@@ -12,35 +12,57 @@ public sealed class PackRedeem
     public required int Level { get; init; }
     /// <summary>True when this duplicate no longer raises the level.</summary>
     public required bool AtMax { get; init; }
+
+    /// <summary>Tokens handed back because the pull was already at its ceiling.</summary>
+    public double Refund { get; init; }
 }
 
 /// <summary>The crate roll: one drink per open, weighted by rarity.</summary>
 public static class PackSystem
 {
-    public static int Weight(Rarity rarity) => rarity switch
+    /// <summary>
+    /// Relative pull weight per *drink* of a tier, not per tier -- adding another
+    /// Legendary makes each Legendary rarer, which is the behaviour you want when
+    /// the roster grows.
+    ///
+    /// Doubles rather than ints because the tail needs the resolution: Mythic is
+    /// around one pull in seven thousand, and integer weights cannot express that
+    /// alongside a Common without absurd numbers.
+    /// </summary>
+    public static double Weight(Rarity rarity) => rarity switch
     {
-        Rarity.Common => 60,
-        Rarity.Uncommon => 30,
-        Rarity.Rare => 10,
-        Rarity.Epic => 4,
-        Rarity.Legendary => 1,
-        _ => 0
+        Rarity.Common => 1000.0,
+        Rarity.Uncommon => 400.0,
+        Rarity.Rare => 120.0,
+        Rarity.Epic => 30.0,
+        Rarity.Legendary => 4.0,
+        Rarity.Mythic => 0.85,
+        _ => 0.0
     };
 
-    public static readonly int TotalWeight =
+    public static readonly double TotalWeight =
         DrinkDatabase.PackDrinks.Sum(d => Weight(d.Rarity));
 
+    /// <summary>Chance of a single named drink coming out of one crate.</summary>
+    public static double ChanceOf(DrinkDef drink) => Weight(drink.Rarity) / TotalWeight;
+
+    /// <summary>
+    /// One drink per crate, weighted. Deliberately memoryless: there is no pity
+    /// counter, no bad-luck protection and no history, so every crate is the same
+    /// independent roll as the first.
+    /// </summary>
     public static DrinkDef Roll(Random rng)
     {
-        var pick = rng.Next(TotalWeight);
+        var pick = rng.NextDouble() * TotalWeight;
 
         foreach (var drink in DrinkDatabase.PackDrinks)
         {
             pick -= Weight(drink.Rarity);
-            if (pick < 0) return drink;
+            if (pick < 0.0) return drink;
         }
 
-        // Unreachable while TotalWeight is the sum above; belt and braces.
+        // Only reachable through floating-point drift at the very top of the
+        // range; the last drink is as good an answer as any.
         return DrinkDatabase.PackDrinks[^1];
     }
 }

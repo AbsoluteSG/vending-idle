@@ -61,6 +61,16 @@ public static class Balance
     /// </summary>
     public const double ChainDecay = 0.55;
 
+    /// <summary>
+    /// Share of a drink's value a chain hop pays in cash. Cascades multiply
+    /// bottles, and bottles are money, so an unshaded hop makes chains a value
+    /// multiplier by the back door -- which is the exact failure both earlier
+    /// balance passes were undone by. Hops pay full tokens and full stock
+    /// consumption; what they pay less of is cash, so a cascade is worth
+    /// building for the collection rather than for the till.
+    /// </summary>
+    public const double ChainHopPayoutShare = 0.4;
+
     /// <summary>Machine-wide chain chance per level of the Live Wire upgrade.</summary>
     public const double ChainChancePerLevel = 0.015;
     public const double ChainChanceMax = 0.75;
@@ -104,21 +114,90 @@ public static class Balance
     /// <summary>Extra tokens when a dispense crits.</summary>
     public const long CritTokenBonus = 1;
 
-    /// <summary>Extra tokens per bottle per level of the Loyalty Scheme upgrade.</summary>
-    public const double TokensPerBottlePerLevel = 0.25;
+
+/// <summary>
+    /// Crate price. Flat, forever -- a crate costs what a crate costs, the way a
+    /// pack does in every game that sells them. Pacing lives in
+    /// <see cref="SupplyQuotaPerDay"/> and in the pull table, not in the price.
+    /// </summary>
+    public const double PackCost = 250.0;
+
+    // ---- Supply quota (the soft cap) -------------------------------------
+    /// <summary>
+    /// Packs per day the quota regenerates at zero upgrades. The Supply Contract
+    /// upgrade raises this; see <see cref="SupplyQuotaPacksMax"/> for the ceiling.
+    /// </summary>
+    public const double SupplyQuotaPacksBase = 25.0;
 
     /// <summary>
-    /// Token price of the Nth crate (N = crates already opened). Tokens are
-    /// earned per bottle and a shake vends every stocked slot at once, so token
-    /// income scales with the machine; the price has to climb faster than the
-    /// cabinet grows or crates arrive in a flood. Tuned so a greedy first five
-    /// minutes opens none and a greedy half hour opens roughly one.
+    /// Packs per day at maximum Supply Contract -- the cap the whole economy is
+    /// built around. Perfect active play drains the quota exactly as fast as it
+    /// refills, so this is the real ceiling on how fast a collection can grow.
     /// </summary>
-    public const double PackBaseCost = 3000.0;
-    public const double PackCostGrowth = 1.35;
+    public const double SupplyQuotaPacksMax = 100.0;
 
-    /// <summary>Duplicate copies past this stop raising the drink's effect level.</summary>
-    public const int EffectLevelMax = 5;
+    public const double SecondsPerDay = 86_400.0;
+
+    /// <summary>
+    /// Crates a brand-new save opens with. A welcome, not a head start: the
+    /// starting bank is the one thing a player can spend without earning it, so
+    /// it is a handful rather than the full reserve.
+    /// </summary>
+    public const double StartingQuotaPacks = 3.0;
+
+    /// <summary>
+    /// How much unspent quota can bank, in days. Enough that a night away is not
+    /// wasted, short enough that it cannot be hoarded into a burst that defeats
+    /// the cap.
+    /// </summary>
+    public const double SupplyQuotaReserveDays = 1.5;
+
+    /// <summary>
+    /// What a sale earns once the quota is dry: nothing.
+    ///
+    /// This started as a 15% trickle so grinding past the cap was worth less
+    /// rather than worth nothing. Measured, that defeated the cap outright -- a
+    /// twelve-slot machine shaken flat out opened 4,826 crates in a simulated
+    /// day against a 100 ceiling, because a trickle proportional to sales scales
+    /// with the machine exactly like the income it is meant to be bounding.
+    ///
+    /// The softness comes from <see cref="SupplyQuotaReserveDays"/> instead: the
+    /// quota banks while you are away and can be spent in a burst, so the cap is
+    /// a daily average rather than an hourly wall. That is bounded by
+    /// construction, which a proportional share can never be.
+    /// </summary>
+    public const double OverQuotaTokenRate = 0.0;
+
+    /// <summary>
+    /// Fraction of the crate price refunded when a pull is already at its level
+    /// ceiling. Without it the late collection is mostly dead pulls; with it a
+    /// duplicate still feeds the next crate.
+    /// </summary>
+    public const double DuplicateRefund = 0.35;
+
+    /// <summary>
+    /// Level ceiling for the commonest tier. Rarer drinks cap lower -- a Mythic
+    /// that needed 55 copies would never leave level 1 -- so the real ceiling is
+    /// <see cref="DrinkDef.MaxEffectLevel"/> per drink.
+    /// </summary>
+    public const int EffectLevelMax = 10;
+
+    /// <summary>
+    /// Copies to climb from level L-1 to L is L, so reaching level L costs
+    /// L(L+1)/2 in total: 55 copies for a maxed common, 6 for a maxed Mythic.
+    /// </summary>
+    public static int CopiesForLevel(int level) => level <= 0 ? 0 : level * (level + 1) / 2;
+
+    /// <summary>Highest level a drink of this tier can reach.</summary>
+    public static int MaxLevelFor(Rarity rarity) => rarity switch
+    {
+        Rarity.Common => 10,
+        Rarity.Uncommon => 9,
+        Rarity.Rare => 7,
+        Rarity.Epic => 5,
+        Rarity.Legendary => 4,
+        _ => 3
+    };
 
     // ---- Time ------------------------------------------------------------
     /// <summary>Live simulation runs at a fixed 20 Hz.</summary>

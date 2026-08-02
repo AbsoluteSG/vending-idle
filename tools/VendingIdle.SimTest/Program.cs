@@ -51,6 +51,8 @@ public static class Program
         RevealMustBeRedeemed();
         DuplicatesRaiseLevelToCap();
         RarityWeightsHold();
+        CollectionIsALongTail();
+        SupplyQuotaCapsDailyPacks();
         AurasRequireStock();
         AuraCapsHold();
         ChainCascadesAreBounded();
@@ -585,7 +587,8 @@ public static class Program
         // value tier and bought with tokens, so they are a separate pacing axis
         // and folding them in here would make this guard fire on crate luck.
         Check("five minutes does not hand out the roster", PurchaseDrinksUnlocked(state) <= 2);
-        Check("five minutes opens no crates", state.PacksOpened == 0);
+        Check($"five minutes stays inside the daily crate cap ({state.PacksOpened})",
+              state.PacksOpened <= Balance.SupplyQuotaPacksMax);
     }
 
     /// <summary>
@@ -646,8 +649,8 @@ public static class Program
         // The crate track should have opened by now, but only just: a half hour
         // of greedy play is meant to buy a taste of the pack roster, not the
         // combo pieces that make cascades run.
-        Check($"30 minutes opens a crate or two ({state.PacksOpened})",
-              state.PacksOpened is >= 1 and <= 3);
+        Check($"30 minutes opens crates without passing the daily cap ({state.PacksOpened})",
+              state.PacksOpened >= 1 && state.PacksOpened <= Balance.SupplyQuotaPacksMax);
         Check("30 minutes leaves something left to chase",
               DrinkDatabase.UnlockedFor(state).Count() < DrinkDatabase.All.Count);
 
@@ -811,7 +814,7 @@ public static class Program
         Check("opening a crate rolls a pack drink",
               rolled is not null && DrinkDatabase.Get(rolled)?.Source == DrinkSource.Pack);
         Check("opening deducts the token price", Math.Abs(state.Tokens - (granted - cost)) < 1e-9);
-        Check("crate price rises after opening", state.NextPackCost > cost);
+        Check("crate price never moves", Math.Abs(state.NextPackCost - cost) < 1e-9);
     }
 
     private static void RevealMustBeRedeemed()
@@ -843,22 +846,44 @@ public static class Program
     private static void DuplicatesRaiseLevelToCap()
     {
         var state = GameState.NewGame();
-        var ok = true;
+        var fizz = DrinkDatabase.Get("chain_fizz")!;
+        var max = fizz.MaxEffectLevel;
 
-        for (var copy = 1; copy <= Balance.EffectLevelMax + 3; copy++)
+        // Levels cost progressively more copies, so the level after N copies is
+        // whatever the cumulative curve says rather than N.
+        var ok = true;
+        var copiesForMax = Balance.CopiesForLevel(max);
+
+        for (var copy = 1; copy <= copiesForMax + 3; copy++)
         {
             state.PendingRevealId = "chain_fizz";
             var redeem = state.RedeemReveal()!;
 
-            var expectedLevel = Math.Min(copy, Balance.EffectLevelMax);
+            var expectedLevel = 0;
+            while (expectedLevel < max && copy >= Balance.CopiesForLevel(expectedLevel + 1))
+                expectedLevel++;
+
             if (redeem.Level != expectedLevel) ok = false;
             if (redeem.WasNew != (copy == 1)) ok = false;
-            if (redeem.AtMax != (copy > Balance.EffectLevelMax)) ok = false;
+            if (redeem.AtMax != (expectedLevel >= max)) ok = false;
         }
 
-        Check("duplicates raise the effect level and stop at the cap", ok);
-        Check("effect level reads back capped",
-              state.EffectLevelOf(DrinkDatabase.Get("chain_fizz")!) == Balance.EffectLevelMax);
+        Check("duplicates raise the effect level along the copy curve", ok);
+        Check("effect level reads back capped at the tier ceiling",
+              state.EffectLevelOf(fizz) == max);
+        Check($"a maxed common costs {copiesForMax} copies", copiesForMax == 55);
+
+        // Rarer drinks cap lower, because they are pulled far less often.
+        Check("a Mythic caps below a common",
+              DrinkDatabase.Get("midas_mixer")!.MaxEffectLevel < max);
+
+        // The refund is what keeps the long tail from being dead pulls.
+        var before = state.Tokens;
+        state.PendingRevealId = "chain_fizz";
+        var dupe = state.RedeemReveal()!;
+
+        Check("a pull at the ceiling refunds part of the crate",
+              dupe.Refund > 0.0 && state.Tokens > before);
     }
 
     private static void RarityWeightsHold()
@@ -882,6 +907,129 @@ public static class Program
             .All(r => Math.Abs(Share(r) - Expected(r)) < 0.03);
 
         Check("rarity weights hold over 20k rolls", ok);
+    }
+
+    /// <summary>
+    /// The collection is the long game, so its length gets measured rather than
+    /// assumed. Reports median packs to a near-complete set and to a full one.
+    /// </summary>
+    private static void CollectionIsALongTail()
+    {
+        double ExpectedPacks(Rarity r) => PackSystem.TotalWeight / PackSystem.Weight(r);
+
+        var common = ExpectedPacks(Rarity.Common);
+        var legendary = ExpectedPacks(Rarity.Legendary);
+        var mythic = ExpectedPacks(Rarity.Mythic);
+
+        Console.WriteLine($"        [packs to first copy: common {common:0}, " +
+                          $"rare {ExpectedPacks(Rarity.Rare):0}, " +
+                          $"epic {ExpectedPacks(Rarity.Epic):0}, " +
+                          $"legendary {legendary:0}, mythic {mythic:0}]");
+
+        Check($"a common lands almost immediately ({common:0} packs)", common < 15);
+        Check($"a legendary is a long chase ({legendary:0} packs)",
+              legendary is > 700 and < 3_000);
+        Check($"a mythic is measured in thousands ({mythic:0} packs)",
+              mythic is > 4_000 and < 12_000);
+
+        // Empirical: distinct drinks seen, over independent collections.
+        var total = DrinkDatabase.PackDrinks.Count;
+        var nearTarget = total - 2;
+
+        var nearRuns = new List<int>();
+        var fullRuns = new List<int>();
+
+        for (var trial = 0; trial < 40; trial++)
+        {
+            var rng = new Random(9000 + trial);
+            var seen = new HashSet<string>();
+            var near = 0;
+
+            for (var pack = 1; pack <= 200_000; pack++)
+            {
+                seen.Add(PackSystem.Roll(rng).Id);
+
+                if (near == 0 && seen.Count >= nearTarget) near = pack;
+                if (seen.Count == total) { fullRuns.Add(pack); break; }
+            }
+
+            if (near > 0) nearRuns.Add(near);
+        }
+
+        nearRuns.Sort();
+        fullRuns.Sort();
+
+        var nearMedian = nearRuns[nearRuns.Count / 2];
+        var fullMedian = fullRuns.Count == 40 ? fullRuns[fullRuns.Count / 2] : int.MaxValue;
+
+        var cap = Balance.SupplyQuotaPacksMax;
+        Console.WriteLine($"        [collection: {nearTarget}/{total} drinks in {nearMedian} packs " +
+                          $"(~{nearMedian / cap:0} days), all {total} in {fullMedian} packs " +
+                          $"(~{fullMedian / cap:0} days)]");
+
+        Check($"a near-complete set lands around 2k packs ({nearMedian})",
+              nearMedian is > 500 and < 4_000);
+        Check($"the last drinks take thousands more ({fullMedian})",
+              fullMedian > nearMedian * 2 && fullMedian is > 4_000 and < 30_000);
+        Check("every collection completes eventually", fullRuns.Count == 40);
+    }
+
+    /// <summary>
+    /// The soft cap is the whole pacing mechanism, so it is checked against the
+    /// worst case: a huge machine shaken flat out, which is the fastest anyone
+    /// can possibly earn tokens.
+    /// </summary>
+    private static void SupplyQuotaCapsDailyPacks()
+    {
+        var state = GameState.NewGame();
+        var rng = new Random(555);
+
+        state.Money = 1e12;
+        for (var i = 1; i < 12; i++)
+        {
+            state.TryBuySlot(i);
+            state.TryAssignDrink(i, "fizzy_water");
+        }
+
+        // Maxed supply contract: the advertised ceiling.
+        state.UpgradeLevels[(int)UpgradeId.TokenRate] = 20;
+        Check($"a maxed supply contract reaches the cap ({state.SupplyQuotaPacksPerDay:0}/day)",
+              Math.Abs(state.SupplyQuotaPacksPerDay - Balance.SupplyQuotaPacksMax) < 1e-6);
+
+        state.SupplyQuota = 0.0;
+        state.Tokens = 0.0;
+
+        // One simulated day, shaking as fast as a player conceivably could, with
+        // every slot kept full so nothing throttles the bottle count.
+        const double day = Balance.SecondsPerDay;
+        var opened = 0;
+
+        for (var second = 0.0; second < day; second += 1.0)
+        {
+            foreach (var slot in state.Slots)
+                if (slot.Unlocked && slot.DrinkId is not null)
+                    slot.Stock = state.SlotCapacity;
+
+            for (var shake = 0; shake < 5; shake++) Simulation.Shake(state, rng);
+
+            Simulation.Step(state, 1.0, rng);
+
+            while (state.CanOpenPack)
+            {
+                state.TryOpenPack(rng);
+                state.RedeemReveal();
+                opened++;
+            }
+        }
+
+        Console.WriteLine($"        [24h of flat-out shaking: {opened} crates]");
+
+        // Tight on purpose. This is the number the whole collection curve is
+        // built on, so it should fail loudly if anything ever earns tokens
+        // around the quota rather than through it.
+        Check($"a day of perfect play lands on the cap ({opened})",
+              opened >= Balance.SupplyQuotaPacksMax * 0.9 &&
+              opened <= Balance.SupplyQuotaPacksMax * 1.1);
     }
 
     /// <summary>Grants copies and loads the drink into the given slot, stocked.</summary>
@@ -1074,6 +1222,11 @@ public static class Program
         for (var i = 0; i < 3_000; i++)
         {
             for (var slot = 0; slot < 7; slot++) state.Slots[slot].Stock = state.SlotCapacity;
+
+            // Topped up each iteration: this is measuring the Loyalty Lemon
+            // bonus, not the supply quota, and a dry quota would drop every
+            // award to the over-quota trickle and mask it.
+            state.SupplyQuota = state.SupplyQuotaMax;
 
             var tokensBefore = state.Tokens;
             if (Simulation.Click(state, rng).Chain is not { } chain) continue;

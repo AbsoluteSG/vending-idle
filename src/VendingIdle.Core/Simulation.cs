@@ -218,7 +218,7 @@ public static class Simulation
         state.Money += payout;
         state.TotalEarned += payout;
         state.TotalCansSold += cans;
-        state.Tokens += cans * state.TokensPerBottle + (crit ? Balance.CritTokenBonus : 0);
+        state.EarnTokens(cans * state.TokensPerBottle + (crit ? Balance.CritTokenBonus : 0));
 
         // Courier Cola: chance to drop one free bottle into a dry slot elsewhere.
         var courierIndex = -1;
@@ -315,13 +315,14 @@ public static class Simulation
             if (!preserved) next.Stock -= 1;
 
             var payout = nextDrink.Value * state.ClickValueMultiplier
-                         * (hopCrit ? Balance.CritMultiplier : 1.0);
+                         * (hopCrit ? Balance.CritMultiplier : 1.0)
+                         * Balance.ChainHopPayoutShare;
 
             state.Money += payout;
             state.TotalEarned += payout;
             state.TotalCansSold += 1;
-            state.Tokens += state.TokensPerBottle + auras.ChainTokenBonus
-                            + (hopCrit ? Balance.CritTokenBonus : 0);
+            state.EarnTokens(state.TokensPerBottle + auras.ChainTokenBonus
+                             + (hopCrit ? Balance.CritTokenBonus : 0));
 
             hops ??= new List<ChainHop>(maxHops);
             hops.Add(new ChainHop
@@ -428,6 +429,7 @@ public static class Simulation
     {
         if (dt <= 0.0) return;
 
+        state.RegenerateQuota(dt);
         TickAutoRestock(state, dt, events);
         TickCustomers(state, dt, rng, events);
     }
