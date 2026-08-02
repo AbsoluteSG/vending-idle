@@ -14,6 +14,14 @@ public static class UpgradePanel
     private const int CardHeight = 62;
     private const int CardGap = 5;
 
+    /// <summary>
+    /// Wheel scroll for the card list. The panel used to simply stop drawing when
+    /// it ran out of room, which was fine at seven upgrades and silently hid
+    /// fifteen of twenty-two once the second pass landed -- invisible and
+    /// unbuyable, with nothing on screen to say so.
+    /// </summary>
+    private static float _scroll;
+
     /// <param name="focusIndex">
     /// Keyboard-focused row, or -1 when the pointer owns this panel. Drawn as an
     /// outline rather than a fill so it reads as "where the keys are" and never
@@ -30,12 +38,40 @@ public static class UpgradePanel
 
         var y = DrawStats(ui, state, body);
 
+        var stride = CardHeight + CardGap;
+        var listArea = new Rectangle(body.X, y, body.Width, Math.Max(0, body.Bottom - y));
+        var maxScroll = Math.Max(0, UpgradeDatabase.Count * stride - listArea.Height);
+
+        if (ui.Hovering(listArea) && ui.WheelDelta != 0)
+            _scroll -= ui.WheelDelta * 0.5f;
+        _scroll = MathHelper.Clamp(_scroll, 0f, maxScroll);
+
+        // Keep the keyboard-focused card on screen when the keys walk past the
+        // bottom of the window.
+        if (focusIndex >= 0)
+        {
+            var top = focusIndex * stride;
+            if (top < _scroll) _scroll = top;
+            else if (top + stride > _scroll + listArea.Height)
+                _scroll = top + stride - listArea.Height;
+
+            _scroll = MathHelper.Clamp(_scroll, 0f, maxScroll);
+        }
+
+        ui.PushClip(listArea);
+        y = listArea.Y - (int)_scroll;
+
         var row = -1;
         foreach (var def in UpgradeDatabase.All)
         {
             row++;
             var rect = new Rectangle(body.X, y, body.Width, CardHeight);
-            if (rect.Bottom > body.Bottom) break;
+
+            if (rect.Bottom < listArea.Y || rect.Y > listArea.Bottom)
+            {
+                y += stride;
+                continue;
+            }
 
             var level = state.UpgradeLevel(def.Id);
             var maxed = def.IsMaxed(level);
@@ -99,8 +135,10 @@ public static class UpgradePanel
                 bought = def.Id;
             }
 
-            y += CardHeight + CardGap;
+            y += stride;
         }
+
+        ui.PopClip();
 
         return bought;
     }

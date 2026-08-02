@@ -19,6 +19,7 @@ public sealed class Effects
     /// </summary>
     private const int MaxPopups = 96;
     private const int MaxBottles = 64;
+    private const int MaxChainMarks = 48;
     private const float Gravity = 1900f;
 
     private struct Popup
@@ -47,10 +48,29 @@ public sealed class Effects
         public int Bounces;
         public bool Resting;
         public float Pitch;
+
+        /// <summary>Held in the rack this long before it falls, so a cascade drops in sequence.</summary>
+        public float Delay;
+    }
+
+    /// <summary>
+    /// A slot lighting up because a cascade reached it. Purely presentational --
+    /// the sim resolves a whole cascade in one instant, and these stagger the
+    /// picture so the player can read *where* it went and in what order.
+    /// </summary>
+    private struct ChainMark
+    {
+        public Rectangle Cell;
+        public Color Color;
+        public float Delay;
+        public float Life;
+        public float MaxLife;
+        public bool Origin;
     }
 
     private readonly List<Popup> _popups = new();
     private readonly List<Bottle> _bottles = new();
+    private readonly List<ChainMark> _chainMarks = new();
     private readonly Random _rng = new();
 
     public float TrayFlash { get; private set; }
@@ -140,7 +160,8 @@ public sealed class Effects
     /// </summary>
     public event Action<float>? BottleLanded;
 
-    public void SpawnBottle(Rectangle from, float floorY, Color color, float pitch = 0f)
+    public void SpawnBottle(Rectangle from, float floorY, Color color, float pitch = 0f,
+                            float delay = 0f)
     {
         if (_bottles.Count >= MaxBottles) return;
 
@@ -148,6 +169,7 @@ public sealed class Effects
 
         _bottles.Add(new Bottle
         {
+            Delay = delay,
             Position = new Vector2(from.Center.X, from.Center.Y),
             Velocity = new Vector2((float)(_rng.NextDouble() * 90.0 - 45.0),
                                    (float)(_rng.NextDouble() * -60.0)),
@@ -163,6 +185,29 @@ public sealed class Effects
             Pitch = pitch
         });
     }
+
+    /// <summary>
+    /// Lights a slot the cascade touched. <paramref name="hop"/> staggers it, so
+    /// the chain reads as travelling from slot to slot rather than every cell in
+    /// the run flashing at the same instant.
+    /// </summary>
+    public void SpawnChainMark(Rectangle cell, Color color, int hop, bool origin = false)
+    {
+        if (_chainMarks.Count >= MaxChainMarks) return;
+
+        _chainMarks.Add(new ChainMark
+        {
+            Cell = cell,
+            Color = color,
+            Delay = hop * ChainStagger,
+            Life = 0f,
+            MaxLife = 0.55f,
+            Origin = origin
+        });
+    }
+
+    /// <summary>Seconds between one link of a cascade lighting up and the next.</summary>
+    public const float ChainStagger = 0.09f;
 
     public void FlashTray() => TrayFlash = 1f;
 
@@ -188,9 +233,33 @@ public sealed class Effects
             _popups[i] = p;
         }
 
+        for (var i = _chainMarks.Count - 1; i >= 0; i--)
+        {
+            var m = _chainMarks[i];
+
+            if (m.Delay > 0f)
+            {
+                m.Delay -= dt;
+                _chainMarks[i] = m;
+                continue;
+            }
+
+            m.Life += dt;
+            if (m.Life >= m.MaxLife) _chainMarks.RemoveAt(i);
+            else _chainMarks[i] = m;
+        }
+
         for (var i = _bottles.Count - 1; i >= 0; i--)
         {
             var b = _bottles[i];
+
+            if (b.Delay > 0f)
+            {
+                b.Delay -= dt;
+                _bottles[i] = b;
+                continue;
+            }
+
             b.Life += dt;
             if (b.Life >= b.MaxLife)
             {
@@ -237,8 +306,36 @@ public sealed class Effects
 
     public void Draw(Ui ui)
     {
+        foreach (var m in _chainMarks)
+        {
+            if (m.Delay > 0f) continue;
+
+            var t = m.Life / m.MaxLife;
+
+            // Snaps to full brightness and eases out, so the arrival reads as a
+            // hit rather than a swell.
+            var alpha = 1f - t * t;
+
+            // The ring pushes outward from the cell as it fades, which is what
+            // makes a run of them look like something travelling.
+            var grow = (int)(t * 7f);
+            var ring = new Rectangle(m.Cell.X - grow, m.Cell.Y - grow,
+                                     m.Cell.Width + grow * 2, m.Cell.Height + grow * 2);
+
+            ui.P.FillRounded(ui.Sb, m.Cell, 4, m.Color * (0.30f * alpha));
+            ui.P.OutlineRounded(ui.Sb, ring, 4, m.Color * alpha, m.Origin ? 3 : 2);
+
+            // The slot that started it gets a glow behind, so you can tell where
+            // a cascade began and not just which cells it touched.
+            if (m.Origin)
+                ui.P.Glow(ui.Sb, new Vector2(m.Cell.Center.X, m.Cell.Center.Y),
+                          m.Cell.Width * 0.9f, m.Color * (0.22f * alpha));
+        }
+
         foreach (var b in _bottles)
         {
+            if (b.Delay > 0f) continue;
+
             // Bottles stay solid through the fall and only fade once they land.
             var remaining = b.MaxLife - b.Life;
             var alpha = MathHelper.Clamp(remaining / 0.5f, 0f, 1f);
@@ -257,6 +354,7 @@ public sealed class Effects
 
     public void Clear()
     {
+        _chainMarks.Clear();
         _popups.Clear();
         _bottles.Clear();
         TrayFlash = 0f;

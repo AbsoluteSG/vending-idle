@@ -55,7 +55,8 @@ public static class Program
         RarityWeightsHold();
         CollectionIsALongTail();
         CrateRateIsUngated();
-        AurasRequireStock();
+        EffectsBelongToTheDrinkSold();
+        OnSaleEffectsFire();
         AuraCapsHold();
         ChainCascadesAreBounded();
         ChainCombosStack();
@@ -1093,6 +1094,114 @@ public static class Program
         if (backup is not null) File.Delete(backup);
     }
 
+    /// <summary>
+    /// The effects that used to be auras now fire on the sale itself, so each is
+    /// checked by selling the drink rather than by reading a machine-wide number.
+    /// </summary>
+    private static void OnSaleEffectsFire()
+    {
+        // Bulk Bottle refunds what the bottle cost to stock.
+        var rebate = GameState.NewGame();
+        var rng = new Random(9182);
+        rebate.Money = 1e9;
+        LoadPackDrink(rebate, 0, "bulk_bottle", Balance.EffectLevelMax);
+
+        var refunds = 0;
+        for (var i = 0; i < 2_000; i++)
+        {
+            rebate.Slots[0].Stock = rebate.SlotCapacity;
+            var before = rebate.Money;
+            var result = Simulation.Click(rebate, rng);
+
+            // A refund makes the sale worth more than its payout alone.
+            if (rebate.Money - before > result.Payout + 1e-9) refunds++;
+        }
+
+        Check($"Bulk Bottle refunds some of its own sales ({refunds}/2000)", refunds > 0);
+
+        // Loyalty Lager pulls customer purchases forward.
+        var pull = GameState.NewGame();
+        pull.Money = 1e9;
+        LoadPackDrink(pull, 0, "loyalty_lager", Balance.EffectLevelMax);
+
+        var pulled = 0;
+        for (var i = 0; i < 2_000; i++)
+        {
+            pull.Slots[0].Stock = pull.SlotCapacity;
+            var before = pull.CustomerClickAccumulator;
+            Simulation.Click(pull, rng);
+            if (pull.CustomerClickAccumulator > before + 1e-9) pulled++;
+        }
+
+        Check($"Loyalty Lager pulls customers in on sale ({pulled}/2000)", pulled > 0);
+
+        // Static Shock crits more often than the same machine without it.
+        var plain = CritRateOf("fizzy_water", 6_000);
+        var boosted = CritRateOf("static_shock", 6_000);
+
+        Check($"Static Shock crits more than a plain drink ({boosted} vs {plain})",
+              boosted > plain);
+    }
+
+    /// <summary>Crits observed selling one drink, with no crit upgrades bought.</summary>
+    private static int CritRateOf(string drinkId, int trials)
+    {
+        var state = GameState.NewGame();
+        var rng = new Random(5150);
+        state.Money = 1e9;
+
+        if (DrinkDatabase.Get(drinkId)!.Source == DrinkSource.Pack)
+            LoadPackDrink(state, 0, drinkId, Balance.EffectLevelMax);
+        else
+            state.TryAssignDrink(0, drinkId);
+
+        var crits = 0;
+        for (var i = 0; i < trials; i++)
+        {
+            state.Slots[0].Stock = state.SlotCapacity;
+            if (Simulation.Click(state, rng).Crit) crits++;
+        }
+
+        return crits;
+    }
+
+    /// <summary>
+    /// Longest cascade seen when <paramref name="drinkId"/> is the slot the
+    /// cursor serves. Every other slot holds plain water, so the only variable is
+    /// the starting drink.
+    /// </summary>
+    private static int LongestCascadeFrom(string drinkId, int trials)
+    {
+        var state = GameState.NewGame();
+        var rng = new Random(4321);
+        state.Money = 1e12;
+
+        for (var i = 1; i < 9; i++)
+        {
+            state.TryBuySlot(i);
+            state.TryAssignDrink(i, "fizzy_water");
+        }
+
+        LoadPackDrink(state, 0, drinkId, Balance.EffectLevelMax);
+        state.UpgradeLevels[(int)UpgradeId.ChainChance] = 40;
+        state.UpgradeLevels[(int)UpgradeId.ChainHops] = 3;
+
+        var longest = 0;
+
+        for (var i = 0; i < trials; i++)
+        {
+            foreach (var slot in state.Slots)
+                if (slot.Unlocked && slot.DrinkId is not null)
+                    slot.Stock = state.SlotCapacity;
+
+            // Cursor pinned to slot 0 so the drink under test always starts it.
+            state.DispenseCursor = 0;
+            longest = Math.Max(longest, Simulation.Click(state, rng).ChainLength);
+        }
+
+        return longest;
+    }
+
     /// <summary>Grants copies and loads the drink into the given slot, stocked.</summary>
     private static void LoadPackDrink(GameState state, int slotIndex, string drinkId, int copies)
     {
@@ -1103,26 +1212,43 @@ public static class Program
         state.RestockToFull(state.Slots[slotIndex]);
     }
 
-    private static void AurasRequireStock()
+    /// <summary>
+    /// Effects belong to the drink being sold, not to the cabinet. Nothing is
+    /// passive-while-stocked any more, so loading a drink must not change the
+    /// machine's own numbers -- only what happens when that slot dispenses.
+    /// </summary>
+    private static void EffectsBelongToTheDrinkSold()
     {
         var state = GameState.NewGame();
         state.Money = 1_000_000.0;
 
         var baseCrit = state.CritChance;
-        LoadPackDrink(state, 1, "static_shock", 3);
+        LoadPackDrink(state, 1, "static_shock", 6);
 
-        Check("a stocked aura slot raises crit chance", state.CritChance > baseCrit);
-
-        state.Slots[1].Stock = 0;
-        Check("a dry aura slot contributes nothing",
+        Check("loading a drink does not move the machine's crit chance",
               Math.Abs(state.CritChance - baseCrit) < 1e-12);
 
-        // Loading the same aura drink twice must not stack it.
-        state.RestockToFull(state.Slots[1]);
-        var single = state.CritChance;
-        LoadPackDrink(state, 2, "static_shock", 3);
-        Check("duplicate slots of one aura drink do not stack",
-              Math.Abs(state.CritChance - single) < 1e-12);
+        var shock = DrinkDatabase.Get("static_shock")!;
+        var water = DrinkDatabase.Get("fizzy_water")!;
+
+        Check("the drink carries its own crit boost",
+              state.EffectStrengthOf(shock, EffectKind.CritBoost) > 0.0);
+        Check("a drink without the effect carries none",
+              state.EffectStrengthOf(water, EffectKind.CritBoost) == 0.0);
+        Check("an effect only answers for its own kind",
+              state.EffectStrengthOf(shock, EffectKind.ChainCrit) == 0.0);
+
+        // A dry slot no longer matters to anything but its own sales -- which is
+        // the entire point of moving off auras.
+        state.Slots[1].Stock = 0;
+        Check("a dry slot changes nothing machine-wide",
+              Math.Abs(state.CritChance - baseCrit) < 1e-12);
+
+        // Effect strength still comes from copies owned, not slots filled.
+        var single = state.EffectStrengthOf(shock, EffectKind.CritBoost);
+        LoadPackDrink(state, 2, "static_shock", 6);
+        Check("loading the same drink twice does not double its effect",
+              Math.Abs(state.EffectStrengthOf(shock, EffectKind.CritBoost) - single) < 1e-12);
     }
 
     private static void AuraCapsHold()
@@ -1200,22 +1326,27 @@ public static class Program
     /// </summary>
     private static void ChainCombosStack()
     {
-        // Relay Rum buys hops, which is the whole enabler.
-        var plain = GameState.NewGame();
-        plain.Money = 100_000_000.0;
-        LoadPackDrink(plain, 0, "chain_fizz", Balance.EffectLevelMax);
-        var baseHops = plain.MaxChainHops;
+        // Relay Rum buys hops, but only for the cascades it starts itself -- the
+        // effect rides the drink being sold, not the cabinet.
+        var relay = GameState.NewGame();
+        relay.Money = 100_000_000.0;
 
-        var extended = GameState.NewGame();
-        extended.Money = 100_000_000.0;
-        LoadPackDrink(extended, 0, "chain_fizz", Balance.EffectLevelMax);
-        LoadPackDrink(extended, 1, "relay_rum", Balance.EffectLevelMax);
+        // Effect strength comes from copies owned, so the drink has to be in the
+        // collection before it carries anything.
+        relay.DrinkCopies["relay_rum"] = Balance.CopiesForLevel(3);
 
-        Check("Relay Rum lengthens cascades", extended.MaxChainHops > baseHops);
+        Check("Relay Rum carries extra hops",
+              relay.EffectStrengthOf(DrinkDatabase.Get("relay_rum")!, EffectKind.ChainExtend) > 0.0);
+        Check("the cabinet's own hop ceiling is untouched by loading it",
+              relay.MaxChainHops == Modifiers.ChainHops(0));
 
-        // ...and stops the moment its slot runs dry, like every other aura.
-        extended.Slots[1].Stock = 0;
-        Check("a dry Relay Rum lends no hops", extended.MaxChainHops == baseHops);
+        // Measured rather than asserted from the property: Relay Rum in the
+        // dispensing slot should produce longer cascades than Chain Fizz does.
+        var longestRelay = LongestCascadeFrom("relay_rum", 8_000);
+        var longestFizz = LongestCascadeFrom("chain_fizz", 8_000);
+
+        Check($"Relay Rum out-reaches a plain chain drink ({longestRelay} vs {longestFizz})",
+              longestRelay > longestFizz);
 
         // Surge Syrup is the only way a hop can crit.
         var crit = GameState.NewGame();

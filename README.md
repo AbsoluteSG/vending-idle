@@ -53,6 +53,15 @@ but each carries an aura (active while loaded *and stocked*) or an on-dispense p
 Duplicates raise the effect's level. Purchase drinks stay pure value -- effects push
 on every lever except the value curve, deliberately.
 
+**Every effect fires when the drink is sold**, not while it sits in the machine.
+They used to be auras: passive while loaded *and stocked*, which quietly asked you
+to keep the whole cabinet topped up to get anything out of them. This is not a game
+about maintaining a full machine, it is a game about shaking one, and an effect you
+have to babysit is an effect nobody uses. So Static Shock lifts the crit chance of
+*its own* sales, Loyalty Lager pulls a customer in when *it* sells, and Relay Rum
+lengthens the cascades *it* starts. A deck is built by choosing what sits in the
+slots you shake, rather than by blanketing the cabinet and never touching it.
+
 ### Crates cost a flat price, and nothing else gates them
 
 A crate costs **250 tokens. Always.** No escalating price, no daily allowance, no
@@ -234,6 +243,40 @@ width is baked into them. `GameState.Migrate` re-lays an older save by compactin
 unlocked slots into the bottom of the new grid, keeping their drinks, stock and
 automation. Positions are not meaningful in themselves, only the count, the contents,
 and the rule that a slot needs one below it.
+
+### Upgrades
+
+Twenty-two tracks. The rule every one of them obeys: **nothing new multiplies raw
+value**. Both earlier balance passes were undone by a second exponential stacking
+onto the value curve, so each track pushes a different lever -- length, frequency,
+cost, ceiling, convenience.
+
+| Track | What it moves |
+|---|---|
+| Premium Pricing / Loose Coil | value per bottle, crit chance |
+| Hire Customer / Thirsty Crowd / **Rush Hour** | idle throughput; Rush adds a burst every 90s |
+| Deeper Shelves / Bulk Supplier / **Wholesale Pallets** | capacity and restock pricing |
+| Faster Trucks / **Fleet Contract** | auto-restocker speed and price |
+| Live Wire / Longer Coils / **Jump Leads** / **Split Coil** | chain chance, hop ceiling, decay, forking |
+| Loyalty Scheme / **Bulk Crates** / **Salvage Rights** | token rate, crates per press, duplicate refund |
+| **Double Rattle** / **Follow-Through** | bottles per shake, chance a shake repeats |
+| **Night Shift** / **Corner Shop** / **Loose Change** | offline cap, slot pricing, empty-shake payout |
+
+**Jump Leads** is the important one. Chain decay is why long cascades were
+theoretical -- at 0.55 a fourth hop needs three compounding rolls -- so making
+decay something you buy is what puts length within reach.
+
+**Double Rattle** is the strongest lever in the game and priced like it: two
+levels at 250k and 3M. It multiplies bottles, and bottles are money *and* crate
+tokens at once, so it pushes both curves simultaneously.
+
+**Follow-Through** re-rolls after each repeat, so it is hard-capped at four extra
+passes. Without that ceiling a high enough chance turns one press into an
+unbounded run.
+
+The panel scrolls. It previously stopped drawing when it ran out of room, which
+was invisible at seven upgrades and hid fifteen of twenty-two the moment this pass
+landed.
 
 ### Feedback ladder
 

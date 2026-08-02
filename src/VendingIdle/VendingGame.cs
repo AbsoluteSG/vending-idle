@@ -445,15 +445,7 @@ public sealed class VendingGame : Game, ISimEvents
             return;
         }
 
-        if (_state.TryOpenPack(_rng) is not null)
-        {
-            _crate.BeginReveal();
-            _sfx.Purchase();
-        }
-        else
-        {
-            _sfx.Denied();
-        }
+        OpenCrates();
     }
 
     /// <summary>
@@ -606,6 +598,40 @@ public sealed class VendingGame : Game, ISimEvents
         _sfx.Purchase();
     }
 
+    /// <summary>
+    /// Opens a crate, or a whole pallet of them once Bulk Crates is bought. The
+    /// first one gets the mystery-box reveal; the rest are granted outright and
+    /// summarised, because twenty-five reveals per press is a minute of watching
+    /// rather than a reward.
+    /// </summary>
+    private void OpenCrates()
+    {
+        var batch = _state.CratesPerOpen;
+
+        if (_state.TryOpenPack(_rng) is null)
+        {
+            _sfx.Denied();
+            return;
+        }
+
+        _crate.BeginReveal();
+        _sfx.Purchase();
+
+        if (batch <= 1) return;
+
+        var extra = _state.OpenPacksBulk(_rng, batch - 1);
+        if (extra.Count == 0) return;
+
+        var newDrinks = extra.Count(r => r.WasNew);
+        var origin = new Vector2(_crate.RevealRect.Center.X - 24, _crate.RevealRect.Y + 26);
+
+        _fx.SpawnPopup($"+{extra.Count} more", origin, Theme.Money, FontSize.Normal);
+
+        if (newDrinks > 0)
+            _fx.SpawnPopup($"{newDrinks} NEW", origin + new Vector2(6, 18),
+                           Theme.Positive, FontSize.Small);
+    }
+
     /// <summary>Keeps the camera on the selected slot when the keys move it.</summary>
     private void FollowSelection()
     {
@@ -663,9 +689,16 @@ public sealed class VendingGame : Game, ISimEvents
     {
         var shake = Simulation.Shake(_state, _rng);
 
-        // A loaded cabinet has weight behind it; an empty one just rattles.
-        _fx.Shake(shake.SpareChange ? 0.45f : 0.85f);
+        // A loaded cabinet has weight behind it; an empty one just rattles, and a
+        // Follow-Through press hits harder because it rocked more than once.
+        var force = shake.SpareChange ? 0.45f : 0.85f;
+        _fx.Shake(Math.Min(1f, force + shake.Repeats * 0.25f));
         _sfx.Shake(paidOut: !shake.SpareChange);
+
+        if (shake.Repeats > 0)
+            _fx.SpawnPopup($"x{shake.Repeats + 1} SHAKE",
+                new Vector2(_machine.TrayRect.Center.X - 30, _machine.TrayRect.Y - 26),
+                Theme.Accent, FontSize.Normal);
 
         foreach (var drop in shake.Drops)
             OnDispense(drop, fromCustomer: false);
@@ -730,19 +763,37 @@ public sealed class VendingGame : Game, ISimEvents
 
         if (result.Chain is { Count: > 0 } chain)
         {
+            // The sim resolves an entire cascade in one instant. Presenting it
+            // that way is unreadable -- four slots simply empty at once -- so the
+            // picture is staggered: each link lights up, then drops, a beat after
+            // the one before it. The delay is cosmetic only; the money and stock
+            // already moved.
+            var originColor = DrinkDatabase.Get(result.DrinkId) is { } startDrink
+                ? Theme.FromPacked(startDrink.Color) : Theme.Accent;
+
+            if (_machine.TryGetCellRect(result.SlotIndex, out var originCell))
+                _fx.SpawnChainMark(originCell, originColor, hop: 0, origin: true);
+
             for (var i = 0; i < chain.Count; i++)
             {
                 var hop = chain[i];
+                var beat = i + 1;
 
                 var hopDrink = DrinkDatabase.Get(hop.DrinkId);
                 var hopColor = hopDrink is not null
                     ? Theme.FromPacked(hopDrink.Color) : Theme.TextDim;
 
+                if (_machine.TryGetCellRect(hop.SlotIndex, out var hopCell))
+                    _fx.SpawnChainMark(hopCell, hopColor, beat);
+
+                // The bottle falls on the same beat the slot lights up, so the
+                // eye follows one link at a time down the run.
                 if (!hop.Preserved &&
                     _machine.TryGetDispensedBottle(hop.SlotIndex, 0, out var hopFrom))
-                    _fx.SpawnBottle(hopFrom, _machine.TrayFloorY, hopColor);
+                    _fx.SpawnBottle(hopFrom, _machine.TrayFloorY, hopColor,
+                                    delay: beat * Effects.ChainStagger);
 
-                if (!_machine.TryGetCellRect(hop.SlotIndex, out var hopCell)) continue;
+                if (!_machine.TryGetCellRect(hop.SlotIndex, out hopCell)) continue;
 
                 _fx.SpawnPopup("+" + Money.Cash(hop.Payout),
                     new Vector2(hopCell.Center.X - 16, hopCell.Y - 2),
@@ -883,8 +934,7 @@ public sealed class VendingGame : Game, ISimEvents
         var bought = false;
         var refused = _ui.ClickDenied;
 
-        if (crate == CrateAction.Open && _state.TryOpenPack(_rng) is not null)
-            _crate.BeginReveal();
+        if (crate == CrateAction.Open) OpenCrates();
 
         if (crate == CrateAction.Redeem) RedeemCrate();
 

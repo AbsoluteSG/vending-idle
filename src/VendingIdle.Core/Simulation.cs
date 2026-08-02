@@ -58,6 +58,9 @@ public readonly struct ShakeResult
     /// <summary>True when nothing was stocked and the machine paid coins instead.</summary>
     public bool SpareChange { get; init; }
 
+    /// <summary>Extra passes Follow-Through added to this press.</summary>
+    public int Repeats { get; init; }
+
     /// <summary>How many slots gave up a bottle -- 0 on a spare-change shake.</summary>
     public int SlotsHit => SpareChange ? 0 : Drops.Count;
 }
@@ -125,15 +128,27 @@ public static class Simulation
         var drops = new List<ClickResult>();
         var payout = 0.0;
         var cans = 0;
+        var repeats = 0;
 
-        foreach (var slot in state.Slots)
+        // Follow-Through can rock the cabinet again off one press. Capped: the
+        // roll repeats after every pass, so without a ceiling a high enough
+        // chance turns one press into an unbounded run.
+        while (true)
         {
-            if (!slot.CanDispense) continue;
+            foreach (var slot in state.Slots)
+            {
+                if (!slot.CanDispense) continue;
 
-            var drop = DispenseFrom(state, slot, rng, units);
-            drops.Add(drop);
-            payout += drop.Payout;
-            cans += drop.Cans;
+                var drop = DispenseFrom(state, slot, rng, units);
+                drops.Add(drop);
+                payout += drop.Payout;
+                cans += drop.Cans;
+            }
+
+            if (repeats >= Balance.FollowThroughMaxRepeats) break;
+            if (rng.NextDouble() >= state.FollowThroughChance) break;
+
+            repeats++;
         }
 
         if (drops.Count == 0)
@@ -153,7 +168,8 @@ public static class Simulation
             Drops = drops,
             Payout = payout,
             Cans = cans,
-            SpareChange = false
+            SpareChange = false,
+            Repeats = repeats
         };
     }
 
@@ -164,7 +180,7 @@ public static class Simulation
     private static ClickResult PaySpareChange(GameState state, Random rng)
     {
         var crit = RollCrit(state, rng);
-        var change = Balance.SpareChange * state.ClickValueMultiplier
+        var change = state.SpareChangePayout * state.ClickValueMultiplier
                      * (crit ? Balance.CritMultiplier : 1.0);
 
         state.Money += change;
@@ -192,7 +208,9 @@ public static class Simulation
         var drink = slot.Drink!;
         var level = state.EffectLevelOf(drink);
 
-        var crit = RollCrit(state, rng);
+        // Static Shock lifts the crit chance of its own sales rather than the
+        // whole cabinet's, so the drink has to be in the slot being shaken.
+        var crit = RollCrit(state, rng, state.EffectStrengthOf(drink, EffectKind.CritBoost));
         var critMult = crit ? Balance.CritMultiplier : 1.0;
 
         // A crit always pays double; it takes an extra can with it when the coil
@@ -232,6 +250,20 @@ public static class Simulation
                 courierIndex = target.Index;
             }
         }
+
+        // Bulk Bottle: the sale hands back what the bottle cost to stock.
+        var rebate = state.EffectStrengthOf(drink, EffectKind.Rebate);
+        if (rebate > 0.0 && rng.NextDouble() < rebate)
+        {
+            var back = drink.UnitCostAt(slot.Stock, state.SlotCapacity, state.RestockGrowthFactor)
+                       * state.RestockDiscount * sold;
+            state.Money += back;
+        }
+
+        // Loyalty Lager: the sale pulls the next customer purchase forward.
+        var pull = state.EffectStrengthOf(drink, EffectKind.CustomerPull);
+        if (pull > 0.0 && rng.NextDouble() < pull)
+            state.CustomerClickAccumulator += 1.0;
 
         var chain = RunCascade(state, slot, drink, level, rng);
 
@@ -280,7 +312,11 @@ public static class Simulation
 
         if (chance <= 0.0) return null;
 
-        var maxHops = state.MaxChainHops;
+        // Relay Rum and friends extend the cascades *they* start, so the ceiling
+        // is read from the originating drink rather than from the cabinet.
+        var maxHops = state.MaxChainHops
+                      + (int)state.EffectStrengthOf(drink, EffectKind.ChainExtend);
+
         if (maxHops <= 0) return null;
 
         // Rolled before anything is allocated: the overwhelming majority of
@@ -288,10 +324,17 @@ public static class Simulation
         // during offline catch-up.
         if (rng.NextDouble() >= Math.Min(chance, Balance.ChainChanceMax)) return null;
 
-        var auras = state.Auras;
+        // Every hop-shaping effect belongs to the drink that started this
+        // cascade. Read once here rather than per hop.
+        var hopCritChance = state.EffectStrengthOf(drink, EffectKind.ChainCrit);
+        var hopPreserveChance = state.EffectStrengthOf(drink, EffectKind.ChainPreserve);
+        var hopTokenBonus = state.EffectStrengthOf(drink, EffectKind.ChainToken);
+
+        var decay = state.ChainDecay;
+        var forkChance = state.ChainForkChance;
 
         List<ChainHop>? hops = null;
-        Span<int> visited = stackalloc int[maxHops + 1];
+        Span<int> visited = stackalloc int[maxHops * 2 + 2];
         visited[0] = origin.Index;
         var seen = 1;
 
@@ -302,47 +345,68 @@ public static class Simulation
             var next = NextStockedSlot(state, visited[..seen]);
             if (next is null) break;
 
-            var nextDrink = next.Drink!;
-
-            // A hop is plain unless Surge Syrup is on the glass. That is the
-            // whole point of the drink: crits on hops are something you build.
-            var hopCrit = auras.ChainCritChance > 0.0 &&
-                          rng.NextDouble() < auras.ChainCritChance;
-
-            var preserved = auras.ChainPreserveChance > 0.0 &&
-                            rng.NextDouble() < auras.ChainPreserveChance;
-
-            if (!preserved) next.Stock -= 1;
-
-            var payout = nextDrink.Value * state.ClickValueMultiplier
-                         * (hopCrit ? Balance.CritMultiplier : 1.0)
-                         * Balance.ChainHopPayoutShare;
-
-            state.Money += payout;
-            state.TotalEarned += payout;
-            state.TotalCansSold += 1;
-            state.EarnTokens(state.TokensPerBottle + auras.ChainTokenBonus
-                             + (hopCrit ? Balance.CritTokenBonus : 0));
-
-            hops ??= new List<ChainHop>(maxHops);
-            hops.Add(new ChainHop
-            {
-                SlotIndex = next.Index,
-                DrinkId = nextDrink.Id,
-                Payout = payout,
-                Crit = hopCrit,
-                Preserved = preserved
-            });
-
+            hops ??= new List<ChainHop>(maxHops + 2);
+            VendHop(state, next, rng, hopCritChance, hopPreserveChance, hopTokenBonus, hops);
             visited[seen++] = next.Index;
+
+            // Split Coil: the hop takes a second slot with it. The fork is a free
+            // rider -- it does not consume a hop from the budget and does not
+            // extend the chain -- so forking widens a cascade without letting it
+            // outlive its own decay.
+            if (forkChance > 0.0 && seen < visited.Length && rng.NextDouble() < forkChance)
+            {
+                var fork = NextStockedSlot(state, visited[..seen]);
+                if (fork is not null)
+                {
+                    VendHop(state, fork, rng, hopCritChance, hopPreserveChance, hopTokenBonus, hops);
+                    visited[seen++] = fork.Index;
+                }
+            }
 
             // Decays every hop, so a long tail costs exponentially more chance
             // to reach rather than arriving all at once as the number climbs.
-            hopChance *= Balance.ChainDecay;
+            hopChance *= decay;
             if (rng.NextDouble() >= hopChance) break;
         }
 
         return hops;
+    }
+
+    /// <summary>
+    /// Vends one slot as part of a cascade and records it. Deliberately does not
+    /// re-enter <see cref="DispenseFrom"/>: a hop must not fire the hopped
+    /// drink's own effects, or cascades would seed cascades and the hop budget
+    /// would stop bounding anything.
+    /// </summary>
+    private static void VendHop(GameState state, Slot slot, Random rng,
+                                double critChance, double preserveChance, double tokenBonus,
+                                List<ChainHop> hops)
+    {
+        var drink = slot.Drink!;
+
+        var crit = critChance > 0.0 && rng.NextDouble() < critChance;
+        var preserved = preserveChance > 0.0 && rng.NextDouble() < preserveChance;
+
+        if (!preserved) slot.Stock -= 1;
+
+        var payout = drink.Value * state.ClickValueMultiplier
+                     * (crit ? Balance.CritMultiplier : 1.0)
+                     * Balance.ChainHopPayoutShare;
+
+        state.Money += payout;
+        state.TotalEarned += payout;
+        state.TotalCansSold += 1;
+        state.EarnTokens(state.TokensPerBottle + tokenBonus
+                         + (crit ? Balance.CritTokenBonus : 0));
+
+        hops.Add(new ChainHop
+        {
+            SlotIndex = slot.Index,
+            DrinkId = drink.Id,
+            Payout = payout,
+            Crit = crit,
+            Preserved = preserved
+        });
     }
 
     /// <summary>
@@ -362,9 +426,10 @@ public static class Simulation
         return null;
     }
 
-    private static bool RollCrit(GameState state, Random rng)
+    private static bool RollCrit(GameState state, Random rng, double bonus = 0.0)
     {
-        var crit = rng.NextDouble() < state.CritChance;
+        var chance = Math.Min(Balance.CritChanceMax, state.CritChance + bonus);
+        var crit = rng.NextDouble() < chance;
         if (crit) state.TotalCrits++;
         return crit;
     }
@@ -429,6 +494,7 @@ public static class Simulation
     {
         if (dt <= 0.0) return;
 
+        TickRush(state, dt);
         TickAutoRestock(state, dt, events);
         TickCustomers(state, dt, rng, events);
     }
@@ -463,12 +529,29 @@ public static class Simulation
         }
     }
 
+    /// <summary>
+    /// Rush Hour: a burst every 90 seconds. The timer is on the state and saved,
+    /// so quitting mid-burst does not hand out a fresh one on load.
+    /// </summary>
+    private static void TickRush(GameState state, double dt)
+    {
+        if (state.RushMultiplier <= 1.0)
+        {
+            state.RushTimer = 0.0;
+            return;
+        }
+
+        state.RushTimer += dt;
+        if (state.RushTimer >= Balance.RushIntervalSeconds) state.RushTimer = 0.0;
+    }
+
     private static void TickCustomers(GameState state, double dt, Random rng, ISimEvents? events)
     {
         var customers = state.Customers;
         if (customers <= 0) return;
 
         var clicksPerSecond = customers / state.CustomerInterval;
+        if (state.RushActive) clicksPerSecond *= state.RushMultiplier;
         state.CustomerClickAccumulator += clicksPerSecond * dt;
 
         var clicks = (int)state.CustomerClickAccumulator;
@@ -497,8 +580,9 @@ public static class Simulation
     /// </summary>
     public static OfflineReport RunOffline(GameState state, double elapsedSeconds, Random rng)
     {
-        var capped = elapsedSeconds > Balance.OfflineMaxSeconds;
-        var seconds = Math.Clamp(elapsedSeconds, 0.0, Balance.OfflineMaxSeconds);
+        var limit = state.OfflineMaxSeconds;
+        var capped = elapsedSeconds > limit;
+        var seconds = Math.Clamp(elapsedSeconds, 0.0, limit);
 
         var moneyBefore = state.Money;
         var cansBefore = state.TotalCansSold;

@@ -5,8 +5,19 @@ using System.Globalization;
 namespace VendingIdle.Core;
 
 /// <summary>
-/// What a pack drink does. The design rule these all obey: no effect multiplies
-/// raw value. Both previous balance disasters came from a second system
+/// What a pack drink does.
+///
+/// Every effect fires when the drink is *sold* -- shaken out, or bought by a
+/// customer. None of them are passive-while-stocked any more. Auras asked you to
+/// keep every slot topped up all the time to get anything out of them, and this
+/// is not a game about maintaining a full machine; it is a game about shaking one.
+/// An effect you have to babysit is an effect nobody uses.
+///
+/// The chain effects are scoped to the cascade the drink *starts*, so a deck is
+/// built by choosing what sits in the slots you shake rather than by blanketing
+/// the cabinet.
+///
+/// The design rule they all still obey: no effect multiplies raw value. Both previous balance disasters came from a second system
 /// compounding into the value curve, so effects only push the *other* levers the
 /// simulation already has -- click routing, stock consumption, restock cost,
 /// crit chance and customer speed.
@@ -22,31 +33,31 @@ public enum EffectKind
     /// <summary>Chance a dispense drops one free bottle into a dry slot.</summary>
     CourierDrop,
 
-    /// <summary>Aura: +crit chance machine-wide while loaded and stocked.</summary>
-    CritAura,
+    /// <summary>This drink's own dispenses crit more often.</summary>
+    CritBoost,
 
-    /// <summary>Aura: customers click faster while loaded and stocked.</summary>
-    CustomerSpeedAura,
+    /// <summary>Selling it pulls a customer purchase forward on the spot.</summary>
+    CustomerPull,
 
-    /// <summary>Aura: restocks cheaper machine-wide while loaded and stocked.</summary>
-    RestockDiscountAura,
+    /// <summary>Selling it sometimes refunds what the bottle cost to stock.</summary>
+    Rebate,
 
     // ---- Combo pieces ----------------------------------------------------
     // These exist to be worth *more together than apart*. Each one is weak read
     // on its own card and only pays off once a cascade is actually running, so
     // the interesting decision is which of them share the glass at once.
 
-    /// <summary>Aura: cascades get extra hops. The enabler the rest build on.</summary>
-    ChainExtendAura,
+    /// <summary>Cascades this drink starts get extra hops. The enabler the rest build on.</summary>
+    ChainExtend,
 
-    /// <summary>Aura: chain hops may crit, which they otherwise never do.</summary>
-    ChainCritAura,
+    /// <summary>Hops in its cascades may crit, which they otherwise never do.</summary>
+    ChainCrit,
 
-    /// <summary>Aura: every chain hop pays bonus crate tokens.</summary>
-    ChainTokenAura,
+    /// <summary>Every hop in its cascades pays bonus crate tokens.</summary>
+    ChainToken,
 
-    /// <summary>Aura: chain hops do not consume stock.</summary>
-    ChainPreserveAura,
+    /// <summary>Hops in its cascades do not consume stock.</summary>
+    ChainPreserve,
 
     /// <summary>Chance a dispense knocks an extra bottle out of the same slot.</summary>
     DoubleDrop,
@@ -59,8 +70,8 @@ public sealed class EffectDef
 {
     public required EffectKind Kind { get; init; }
 
-    /// <summary>True for passive-while-stocked effects, false for on-dispense rolls.</summary>
-    public required bool IsAura { get; init; }
+    /// <summary>True when the effect shapes a cascade rather than the dispense itself.</summary>
+    public required bool ShapesChain { get; init; }
 
     /// <summary>Human-readable effect at a given level, for the collection rows.</summary>
     public required Func<int, string> Describe { get; init; }
@@ -121,74 +132,74 @@ public static class EffectDatabase
         new()
         {
             Kind = EffectKind.ChainDispense,
-            IsAura = false,
+            ShapesChain = false,
             Describe = l => Pct(EffectStrength.ChainChance(l)) + " to vend a second slot"
         },
         new()
         {
             Kind = EffectKind.StockPreserve,
-            IsAura = false,
+            ShapesChain = false,
             Describe = l => Pct(EffectStrength.PreserveChance(l)) + " to keep the bottle"
         },
         new()
         {
             Kind = EffectKind.CourierDrop,
-            IsAura = false,
+            ShapesChain = false,
             Describe = l => Pct(EffectStrength.CourierChance(l)) + " to refill a dry slot"
         },
         new()
         {
-            Kind = EffectKind.CritAura,
-            IsAura = true,
-            Describe = l => "+" + Pct(EffectStrength.CritBonus(l)) + " double drop while stocked"
+            Kind = EffectKind.CritBoost,
+            ShapesChain = false,
+            Describe = l => "+" + Pct(EffectStrength.CritBonus(l)) + " double drop on its own sales"
         },
         new()
         {
-            Kind = EffectKind.CustomerSpeedAura,
-            IsAura = true,
-            Describe = l => Pct(EffectStrength.CustomerSpeedup(l)) + " faster customers while stocked"
+            Kind = EffectKind.CustomerPull,
+            ShapesChain = false,
+            Describe = l => Pct(EffectStrength.CustomerSpeedup(l)) + " to pull a customer in on sale"
         },
         new()
         {
-            Kind = EffectKind.RestockDiscountAura,
-            IsAura = true,
-            Describe = l => Pct(EffectStrength.RestockCut(l)) + " off restocks while stocked"
+            Kind = EffectKind.Rebate,
+            ShapesChain = false,
+            Describe = l => Pct(EffectStrength.RestockCut(l)) + " to refund the bottle it sold"
         },
         new()
         {
-            Kind = EffectKind.ChainExtendAura,
-            IsAura = true,
-            Describe = l => "+" + EffectStrength.ChainHops(l) + " chain hop"
-                            + (EffectStrength.ChainHops(l) == 1 ? "" : "s") + " while stocked"
+            Kind = EffectKind.ChainExtend,
+            ShapesChain = true,
+            Describe = l => "+" + EffectStrength.ChainHops(l) + " hop"
+                            + (EffectStrength.ChainHops(l) == 1 ? "" : "s") + " on its chains"
         },
         new()
         {
-            Kind = EffectKind.ChainCritAura,
-            IsAura = true,
-            Describe = l => Pct(EffectStrength.ChainCritChance(l)) + " crit on chain hops"
+            Kind = EffectKind.ChainCrit,
+            ShapesChain = true,
+            Describe = l => Pct(EffectStrength.ChainCritChance(l)) + " crit on its chain hops"
         },
         new()
         {
-            Kind = EffectKind.ChainTokenAura,
-            IsAura = true,
-            Describe = l => "+" + EffectStrength.ChainTokens(l) + " tk per chain hop"
+            Kind = EffectKind.ChainToken,
+            ShapesChain = true,
+            Describe = l => "+" + EffectStrength.ChainTokens(l) + " tk per hop it causes"
         },
         new()
         {
-            Kind = EffectKind.ChainPreserveAura,
-            IsAura = true,
-            Describe = l => Pct(EffectStrength.ChainPreserveChance(l)) + " chain hops keep stock"
+            Kind = EffectKind.ChainPreserve,
+            ShapesChain = true,
+            Describe = l => Pct(EffectStrength.ChainPreserveChance(l)) + " of its hops keep stock"
         },
         new()
         {
             Kind = EffectKind.DoubleDrop,
-            IsAura = false,
+            ShapesChain = false,
             Describe = l => Pct(EffectStrength.DoubleDropChance(l)) + " for a second bottle"
         },
         new()
         {
             Kind = EffectKind.SparkChain,
-            IsAura = false,
+            ShapesChain = false,
             Describe = l => Pct(EffectStrength.SparkChance(l)) + " to start a chain"
         }
     };

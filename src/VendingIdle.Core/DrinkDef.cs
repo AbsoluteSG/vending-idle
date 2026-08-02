@@ -63,8 +63,17 @@ public sealed class DrinkDef
     public const int ScalingSteps = 10;
 
     /// <summary>Per-can price ratio for a slot of the given capacity.</summary>
-    private double StepRatio(int capacity) =>
-        capacity <= 0 ? 1.0 : Math.Pow(RestockGrowth, ScalingSteps / (double)capacity);
+    /// <param name="growthFactor">
+    /// Pulls growth toward flat pricing (Wholesale Pallets). 1.0 leaves the
+    /// drink's own curve alone; 0 makes every bottle cost the same as the first.
+    /// </param>
+    private double StepRatio(int capacity, double growthFactor)
+    {
+        if (capacity <= 0) return 1.0;
+
+        var growth = 1.0 + (RestockGrowth - 1.0) * Math.Clamp(growthFactor, 0.0, 1.0);
+        return Math.Pow(growth, ScalingSteps / (double)capacity);
+    }
 
     /// <summary>Lifetime earnings needed before this drink can be loaded. Purchase drinks only.</summary>
     public double UnlockAtEarned { get; init; }
@@ -94,20 +103,20 @@ public sealed class DrinkDef
     public double SoundPitch { get; init; }
 
     /// <summary>Cost of one unit when the slot currently holds <paramref name="currentStock"/>.</summary>
-    public double UnitCostAt(int currentStock, int capacity) =>
-        RestockUnitCost * Math.Pow(StepRatio(capacity), currentStock);
+    public double UnitCostAt(int currentStock, int capacity, double growthFactor = 1.0) =>
+        RestockUnitCost * Math.Pow(StepRatio(capacity, growthFactor), currentStock);
 
     /// <summary>
     /// Closed-form cost of adding <paramref name="units"/> starting from
     /// <paramref name="currentStock"/> (a geometric series, so bulk restock does
     /// not need to loop).
     /// </summary>
-    public double RestockCost(int currentStock, int units, int capacity)
+    public double RestockCost(int currentStock, int units, int capacity, double growthFactor = 1.0)
     {
         if (units <= 0) return 0.0;
 
-        var first = UnitCostAt(currentStock, capacity);
-        var ratio = StepRatio(capacity);
+        var first = UnitCostAt(currentStock, capacity, growthFactor);
+        var ratio = StepRatio(capacity, growthFactor);
 
         if (Math.Abs(ratio - 1.0) < 1e-12)
             return first * units;

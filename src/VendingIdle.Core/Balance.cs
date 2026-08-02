@@ -78,6 +78,64 @@ public static class Balance
     /// <summary>Extra hops per level of the Longer Coils upgrade.</summary>
     public const int ChainHopsPerLevel = 1;
 
+    /// <summary>
+    /// Jump Leads walks the decay up toward this. Decay is what kills long
+    /// cascades -- at 0.55 a fourth hop needs three compounding rolls -- so this
+    /// is the upgrade that makes length reachable rather than theoretical.
+    /// </summary>
+    public const double ChainDecayMax = 0.82;
+    public const double ChainDecayPerLevel = 0.045;
+
+    /// <summary>Chance a hop forks and vends a second slot, per level of Split Coil.</summary>
+    public const double ChainForkPerLevel = 0.03;
+    public const double ChainForkMax = 0.45;
+
+    // ---- Upgrade tracks added with the second upgrade pass ---------------
+    /// <summary>Bottles a shake pulls from each slot, per level of Double Rattle.</summary>
+    public const int ShakeBottlesPerLevel = 1;
+
+    /// <summary>Chance a shake immediately repeats itself, per level of Follow-Through.</summary>
+    public const double FollowThroughPerLevel = 0.06;
+    public const double FollowThroughMax = 0.5;
+
+    /// <summary>
+    /// Repeats allowed from one press however lucky the rolls are. Follow-Through
+    /// re-rolls after each repeat, so without a hard stop a high enough chance
+    /// lets one press run for an unbounded number of shakes.
+    /// </summary>
+    public const int FollowThroughMaxRepeats = 4;
+
+    /// <summary>Crates opened per press, per level of Bulk Crates.</summary>
+    public const int BulkCratesPerLevel = 4;
+
+    /// <summary>Extra refund fraction per level of Salvage Rights.</summary>
+    public const double SalvagePerLevel = 0.035;
+    public const double DuplicateRefundMax = 0.75;
+
+    /// <summary>Restock growth shrinks toward flat pricing with Wholesale Pallets.</summary>
+    public const double RestockGrowthCutPerLevel = 0.06;
+    public const double RestockGrowthCutMax = 0.75;
+
+    /// <summary>Auto-restocker price growth falls toward this with Fleet Contract.</summary>
+    public const double AutoRestockerGrowthPerLevel = 0.02;
+    public const double AutoRestockerGrowthMin = 1.15;
+
+    /// <summary>Extra offline hours per level of Night Shift.</summary>
+    public const double OfflineHoursPerLevel = 2.0;
+    public const double OfflineMaxHoursCap = 24.0;
+
+    /// <summary>Rush Hour: a periodic burst of customer activity.</summary>
+    public const double RushIntervalSeconds = 90.0;
+    public const double RushDurationSeconds = 8.0;
+    public const double RushMultiplierPerLevel = 0.5;
+
+    /// <summary>Slot price growth falls toward this with Corner Shop.</summary>
+    public const double SlotCostGrowthPerLevel = 0.02;
+    public const double SlotCostGrowthMin = 1.45;
+
+    /// <summary>Spare change per level of Loose Change. Small, as asked.</summary>
+    public const double SpareChangePerLevel = 0.04;
+
     // ---- Spectacle -------------------------------------------------------
     // Thresholds for the feedback ladder. They live here rather than in the draw
     // code because they are balance, not presentation: what counts as a big

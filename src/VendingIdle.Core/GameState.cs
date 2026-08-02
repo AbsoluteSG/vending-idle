@@ -44,6 +44,12 @@ public sealed class GameState
 
     public int PacksOpened { get; set; }
 
+    /// <summary>
+    /// Seconds into the current Rush Hour cycle. Persisted so quitting mid-burst
+    /// does not hand out a fresh one on load.
+    /// </summary>
+    public double RushTimer { get; set; }
+
 
     /// <summary>Copies owned per pack drink id. First copy unlocks; more raise the effect level.</summary>
     public Dictionary<string, int> DrinkCopies { get; set; } = new();
@@ -87,23 +93,21 @@ public sealed class GameState
 
     // Auras fold into the existing derived getters, so the simulation and the
     // UI pick them up with zero new call sites. The global caps are re-applied
-    // AFTER the aura contribution -- a stacked loadout can approach the caps,
-    // never pass them.
+    // These are the machine-wide baselines. Drink effects no longer feed into
+    // them: an effect belongs to the drink being sold, and is applied at the
+    // point of sale rather than aggregated across the cabinet.
 
     [JsonIgnore] public double CritChance =>
         Math.Min(Balance.CritChanceMax,
-                 Modifiers.CritChance(UpgradeLevels[(int)UpgradeId.CritChance])
-                 + Auras.CritBonus);
+                 Modifiers.CritChance(UpgradeLevels[(int)UpgradeId.CritChance]));
 
     [JsonIgnore] public double CustomerInterval =>
         Math.Max(Balance.CustomerIntervalMin,
-                 Modifiers.CustomerInterval(UpgradeLevels[(int)UpgradeId.CustomerSpeed])
-                 * Auras.CustomerIntervalFactor);
+                 Modifiers.CustomerInterval(UpgradeLevels[(int)UpgradeId.CustomerSpeed]));
 
     [JsonIgnore] public double RestockDiscount =>
         Math.Max(Balance.RestockDiscountMin,
-                 Modifiers.RestockDiscount(UpgradeLevels[(int)UpgradeId.RestockDiscount])
-                 * Auras.RestockFactor);
+                 Modifiers.RestockDiscount(UpgradeLevels[(int)UpgradeId.RestockDiscount]));
 
     [JsonIgnore] public double AutoRestockInterval =>
         Modifiers.AutoRestockInterval(UpgradeLevels[(int)UpgradeId.AutoRestockSpeed]);
@@ -113,7 +117,7 @@ public sealed class GameState
     /// <see cref="Balance"/> today; this is the seam a drink effect or an upgrade
     /// hangs off when one wants to knock out more than one per slot.
     /// </summary>
-    [JsonIgnore] public int ShakeBottlesPerSlot => Balance.ShakeBottlesPerSlot;
+    [JsonIgnore] public int ShakeBottlesPerSlot => ShakeBottlesPerSlotUpgraded;
 
     /// <summary>
     /// Machine-wide chance for any dispense to start a cascade. Chain Fizz adds
@@ -124,9 +128,46 @@ public sealed class GameState
         Math.Min(Balance.ChainChanceMax,
                  Modifiers.ChainChance(UpgradeLevels[(int)UpgradeId.ChainChance]));
 
-    /// <summary>Hop ceiling for one cascade, upgrades plus Relay Rum.</summary>
+    /// <summary>Hop ceiling from upgrades alone; the starting drink may add more.</summary>
     [JsonIgnore] public int MaxChainHops =>
-        Modifiers.ChainHops(UpgradeLevels[(int)UpgradeId.ChainHops]) + Auras.ChainHopBonus;
+        Modifiers.ChainHops(UpgradeLevels[(int)UpgradeId.ChainHops]);
+
+    /// <summary>How much of its charge a cascade carries into the next hop.</summary>
+    [JsonIgnore] public double ChainDecay =>
+        Modifiers.ChainDecay(UpgradeLevels[(int)UpgradeId.ChainDecay]);
+
+    /// <summary>Chance a hop forks and takes a second slot with it.</summary>
+    [JsonIgnore] public double ChainForkChance =>
+        Modifiers.ChainFork(UpgradeLevels[(int)UpgradeId.ChainFork]);
+
+    [JsonIgnore] public int ShakeBottlesPerSlotUpgraded =>
+        Modifiers.ShakeBottles(UpgradeLevels[(int)UpgradeId.ShakeYield]);
+
+    [JsonIgnore] public double FollowThroughChance =>
+        Modifiers.FollowThrough(UpgradeLevels[(int)UpgradeId.FollowThrough]);
+
+    [JsonIgnore] public int CratesPerOpen =>
+        Modifiers.CratesPerOpen(UpgradeLevels[(int)UpgradeId.BulkCrates]);
+
+    [JsonIgnore] public double DuplicateRefundRate =>
+        Modifiers.DuplicateRefund(UpgradeLevels[(int)UpgradeId.Salvage]);
+
+    /// <summary>Multiplier pulling per-slot restock growth toward flat pricing.</summary>
+    [JsonIgnore] public double RestockGrowthFactor =>
+        1.0 - Modifiers.RestockGrowthCut(UpgradeLevels[(int)UpgradeId.RestockGrowthCut]);
+
+    [JsonIgnore] public double OfflineMaxSeconds =>
+        Modifiers.OfflineHours(UpgradeLevels[(int)UpgradeId.OfflineHours]) * 3600.0;
+
+    [JsonIgnore] public double RushMultiplier =>
+        Modifiers.RushMultiplier(UpgradeLevels[(int)UpgradeId.RushHour]);
+
+    [JsonIgnore] public double SpareChangePayout =>
+        Modifiers.SpareChange(UpgradeLevels[(int)UpgradeId.SpareChange]);
+
+    /// <summary>True while a Rush Hour burst is running.</summary>
+    [JsonIgnore] public bool RushActive =>
+        RushMultiplier > 1.0 && RushTimer < Balance.RushDurationSeconds;
 
     [JsonIgnore] public double TokensPerBottle =>
         Modifiers.TokensPerBottle(UpgradeLevels[(int)UpgradeId.TokenRate]);
@@ -157,7 +198,9 @@ public sealed class GameState
     [JsonIgnore] public int RowCount => Slots.Count / Balance.Columns;
 
     [JsonIgnore] public double NextSlotCost =>
-        Balance.Cost(Balance.SlotBaseCost, Balance.SlotCostGrowth, SlotsOwned);
+        Balance.Cost(Balance.SlotBaseCost,
+                     Modifiers.SlotCostGrowth(UpgradeLevels[(int)UpgradeId.SlotPrice]),
+                     SlotsOwned);
 
     [JsonIgnore] public double NextAutoRestockerCost => AutoRestockerCostFor(1);
 
@@ -176,7 +219,9 @@ public sealed class GameState
 
         for (var i = 0; i < count; i++)
             total += Balance.Cost(Balance.AutoRestockerBaseCost,
-                                  Balance.AutoRestockerCostGrowth, owned + i);
+                                  Modifiers.AutoRestockerGrowth(
+                                      UpgradeLevels[(int)UpgradeId.AutoRestockerPrice]),
+                                  owned + i);
 
         return total;
     }
@@ -194,111 +239,32 @@ public sealed class GameState
         PendingRevealId is null && Tokens >= NextPackCost;
 
     // ---------------------------------------------------------------------
-    // Effect auras
+    // Per-drink effects
     // ---------------------------------------------------------------------
 
-    public readonly struct AuraSnapshot
-    {
-        public double CritBonus { get; init; }
-        /// <summary>Multiplier on the customer interval (&lt; 1 is faster).</summary>
-        public double CustomerIntervalFactor { get; init; }
-        /// <summary>Multiplier on restock prices (&lt; 1 is cheaper).</summary>
-        public double RestockFactor { get; init; }
-
-        // ---- Chain combo pieces ----
-        /// <summary>Extra hops every cascade gets (Relay Rum).</summary>
-        public int ChainHopBonus { get; init; }
-        /// <summary>Chance an individual chain hop crits (Surge Syrup).</summary>
-        public double ChainCritChance { get; init; }
-        /// <summary>Bonus tokens per chain hop (Loyalty Lemon).</summary>
-        public long ChainTokenBonus { get; init; }
-        /// <summary>Chance a chain hop leaves its bottle on the shelf (Echo Elixir).</summary>
-        public double ChainPreserveChance { get; init; }
-
-        public static AuraSnapshot None => new()
-        {
-            CritBonus = 0.0,
-            CustomerIntervalFactor = 1.0,
-            RestockFactor = 1.0,
-            ChainHopBonus = 0,
-            ChainCritChance = 0.0,
-            ChainTokenBonus = 0,
-            ChainPreserveChance = 0.0
-        };
-    }
-
     /// <summary>
-    /// Aggregated auras. An aura is live while its drink is loaded in an
-    /// unlocked slot *with stock* -- an empty aura slot contributes nothing,
-    /// which keeps aura slots inside the restock tension rather than beside it.
-    /// Each distinct drink counts once, however many slots hold it: strength
-    /// comes from duplicate copies, not from loading it everywhere.
+    /// The strength of <paramref name="kind"/> on this drink, or 0 when it does
+    /// not carry that effect. Effects belong to the drink being sold now, not to
+    /// the cabinet -- there is no machine-wide aggregation left to compute.
     /// </summary>
-    [JsonIgnore] public AuraSnapshot Auras
+    public double EffectStrengthOf(DrinkDef? drink, EffectKind kind)
     {
-        get
+        if (drink?.Effect != kind) return 0.0;
+
+        var level = EffectLevelOf(drink);
+        if (level <= 0) return 0.0;
+
+        return kind switch
         {
-            var critBonus = 0.0;
-            var speedup = 0.0;
-            var restockCut = 0.0;
-            var chainHops = 0;
-            var chainCrit = 0.0;
-            var chainTokens = 0L;
-            var chainPreserve = 0.0;
-
-            // Small fixed roster, so "once per distinct drink" is a seen-set of ids.
-            Span<bool> seen = stackalloc bool[DrinkDatabase.PackDrinks.Count];
-
-            foreach (var slot in Slots)
-            {
-                if (!slot.Unlocked || slot.Stock <= 0) continue;
-
-                var drink = slot.Drink;
-                if (drink?.Effect is not { } effect) continue;
-                if (!EffectDatabase.Get(effect).IsAura) continue;
-
-                var packIndex = IndexInPackRoster(drink.Id);
-                if (packIndex < 0 || seen[packIndex]) continue;
-                seen[packIndex] = true;
-
-                var level = EffectLevelOf(drink);
-                switch (effect)
-                {
-                    case EffectKind.CritAura:
-                        critBonus += EffectStrength.CritBonus(level);
-                        break;
-                    case EffectKind.CustomerSpeedAura:
-                        speedup += EffectStrength.CustomerSpeedup(level);
-                        break;
-                    case EffectKind.RestockDiscountAura:
-                        restockCut += EffectStrength.RestockCut(level);
-                        break;
-                    case EffectKind.ChainExtendAura:
-                        chainHops += EffectStrength.ChainHops(level);
-                        break;
-                    case EffectKind.ChainCritAura:
-                        chainCrit += EffectStrength.ChainCritChance(level);
-                        break;
-                    case EffectKind.ChainTokenAura:
-                        chainTokens += EffectStrength.ChainTokens(level);
-                        break;
-                    case EffectKind.ChainPreserveAura:
-                        chainPreserve += EffectStrength.ChainPreserveChance(level);
-                        break;
-                }
-            }
-
-            return new AuraSnapshot
-            {
-                CritBonus = critBonus,
-                CustomerIntervalFactor = Math.Max(0.0, 1.0 - speedup),
-                RestockFactor = Math.Max(0.0, 1.0 - restockCut),
-                ChainHopBonus = chainHops,
-                ChainCritChance = Math.Min(1.0, chainCrit),
-                ChainTokenBonus = chainTokens,
-                ChainPreserveChance = Math.Min(1.0, chainPreserve)
-            };
-        }
+            EffectKind.CritBoost => EffectStrength.CritBonus(level),
+            EffectKind.CustomerPull => EffectStrength.CustomerSpeedup(level),
+            EffectKind.Rebate => EffectStrength.RestockCut(level),
+            EffectKind.ChainCrit => EffectStrength.ChainCritChance(level),
+            EffectKind.ChainPreserve => EffectStrength.ChainPreserveChance(level),
+            EffectKind.ChainToken => EffectStrength.ChainTokens(level),
+            EffectKind.ChainExtend => EffectStrength.ChainHops(level),
+            _ => 0.0
+        };
     }
 
     private static int IndexInPackRoster(string id)
@@ -504,14 +470,15 @@ public sealed class GameState
     {
         var drink = slot.Drink;
         if (drink is null || units <= 0) return 0.0;
-        return drink.RestockCost(slot.Stock, units, SlotCapacity) * RestockDiscount;
+        return drink.RestockCost(slot.Stock, units, SlotCapacity, RestockGrowthFactor) * RestockDiscount;
     }
 
     /// <summary>Price of the next single can for this slot, discount included.</summary>
     public double UnitCost(Slot slot)
     {
         var drink = slot.Drink;
-        return drink is null ? 0.0 : drink.UnitCostAt(slot.Stock, SlotCapacity) * RestockDiscount;
+        return drink is null ? 0.0
+            : drink.UnitCostAt(slot.Stock, SlotCapacity, RestockGrowthFactor) * RestockDiscount;
     }
 
     /// <summary>Units still needed to fill this slot.</summary>
@@ -535,7 +502,7 @@ public sealed class GameState
         var bought = 0;
         for (var i = 0; i < wanted; i++)
         {
-            var unitCost = drink.UnitCostAt(slot.Stock, SlotCapacity) * RestockDiscount;
+            var unitCost = drink.UnitCostAt(slot.Stock, SlotCapacity, RestockGrowthFactor) * RestockDiscount;
             if (Money < unitCost) break;
             Money -= unitCost;
             slot.Stock++;
@@ -604,6 +571,30 @@ public sealed class GameState
         return PendingRevealId;
     }
 
+    /// <summary>
+    /// Opens several crates at once and grants them outright, returning what came
+    /// out. Only the caller's chosen highlight gets the reveal animation -- at a
+    /// thousand crates an hour, twenty-five mystery-box reveals per press would be
+    /// a minute of watching rather than a reward.
+    /// </summary>
+    public List<PackRedeem> OpenPacksBulk(Random rng, int count)
+    {
+        var results = new List<PackRedeem>();
+
+        for (var i = 0; i < count; i++)
+        {
+            if (PendingRevealId is not null || Tokens < Balance.PackCost) break;
+
+            Tokens -= Balance.PackCost;
+            PacksOpened++;
+
+            PendingRevealId = PackSystem.Roll(rng).Id;
+            if (RedeemReveal() is { } redeem) results.Add(redeem);
+        }
+
+        return results;
+    }
+
     /// <summary>Claims the pending reveal, granting the copy and unblocking the crate.</summary>
     public PackRedeem? RedeemReveal()
     {
@@ -624,7 +615,7 @@ public sealed class GameState
         var refund = 0.0;
         if (atMax)
         {
-            refund = Balance.PackCost * Balance.DuplicateRefund;
+            refund = Balance.PackCost * DuplicateRefundRate;
             Tokens += refund;
         }
 
