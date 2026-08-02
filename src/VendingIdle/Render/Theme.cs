@@ -61,6 +61,21 @@ public static class Theme
     public static readonly Color Crit = new(255, 152, 200);
     public static readonly Color Accent = new(92, 172, 255);
 
+    // ---- Upgrade cards ---------------------------------------------------
+    // Grey-on-dark-blue was the worst-reading text in the game: the dim greys sat
+    // at roughly the same luminance as the card behind them, so the effect lines
+    // and prices had almost no contrast to carry. These are tinted instead of
+    // greyed -- each one is a hue that already means something elsewhere in the
+    // UI, so the colour does double duty as a label.
+    /// <summary>What the upgrade does right now.</summary>
+    public static readonly Color UpgradeEffect = new(198, 214, 240);
+
+    /// <summary>What the next level would make it -- the promise, so it takes the accent.</summary>
+    public static readonly Color UpgradeNext = new(126, 196, 255);
+
+    /// <summary>A price you cannot afford. Muted red reads as "not yet", grey read as "broken".</summary>
+    public static readonly Color PriceUnaffordable = new(198, 118, 110);
+
     public static readonly Color ButtonIdle = new(52, 60, 82);
     public static readonly Color ButtonHover = new(68, 80, 108);
     public static readonly Color ButtonActive = new(88, 104, 140);

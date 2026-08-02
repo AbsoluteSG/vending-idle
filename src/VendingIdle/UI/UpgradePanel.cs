@@ -14,7 +14,14 @@ public static class UpgradePanel
     private const int CardHeight = 62;
     private const int CardGap = 5;
 
-    public static UpgradeId? Draw(Ui ui, GameState state, Rectangle bounds)
+    /// <param name="focusIndex">
+    /// Keyboard-focused row, or -1 when the pointer owns this panel. Drawn as an
+    /// outline rather than a fill so it reads as "where the keys are" and never
+    /// competes with the hover state the mouse is producing at the same time.
+    /// </param>
+    /// <param name="activate">Enter was pressed while this panel held focus.</param>
+    public static UpgradeId? Draw(Ui ui, GameState state, Rectangle bounds,
+                                  int focusIndex = -1, bool activate = false)
     {
         UpgradeId? bought = null;
 
@@ -23,8 +30,10 @@ public static class UpgradePanel
 
         var y = DrawStats(ui, state, body);
 
+        var row = -1;
         foreach (var def in UpgradeDatabase.All)
         {
+            row++;
             var rect = new Rectangle(body.X, y, body.Width, CardHeight);
             if (rect.Bottom > body.Bottom) break;
 
@@ -42,27 +51,34 @@ public static class UpgradePanel
 
             ui.P.FillRounded(ui.Sb, rect, 6, bg);
 
+            var focused = row == focusIndex;
+            if (focused)
+            {
+                ui.P.OutlineRounded(ui.Sb, rect, 6, Theme.Accent, 2);
+                if (activate && !maxed) bought = def.Id;
+            }
+
             ui.T.DrawWithin(ui.Sb, def.Name, new Vector2(rect.X + 9, rect.Y + 5),
                             Theme.Text, rect.Width - 54, FontSize.Small);
 
             ui.T.DrawIn(ui.Sb, maxed ? "MAX" : $"Lv {level}",
                 new Rectangle(rect.X, rect.Y + 5, rect.Width - 9, 16),
-                maxed ? Theme.Accent : Theme.TextDim, FontSize.Small, Align.Right);
+                maxed ? Theme.Accent : Theme.Text, FontSize.Small, Align.Right);
 
             ui.T.DrawWithin(ui.Sb, def.EffectText(level), new Vector2(rect.X + 9, rect.Y + 23),
-                            Theme.TextDim, rect.Width - 18, FontSize.Small);
+                            Theme.UpgradeEffect, rect.Width - 18, FontSize.Small);
 
             if (maxed)
             {
                 ui.T.Draw(ui.Sb, "fully upgraded",
-                          new Vector2(rect.X + 9, rect.Y + 41), Theme.TextFaint, FontSize.Small);
+                          new Vector2(rect.X + 9, rect.Y + 41), Theme.Positive, FontSize.Small);
             }
             else
             {
                 var costText = Money.Cash(cost);
                 ui.T.Draw(ui.Sb, costText,
                           new Vector2(rect.X + 9, rect.Y + 41),
-                          affordable ? Theme.Money : Theme.TextFaint, FontSize.Small);
+                          affordable ? Theme.Money : Theme.PriceUnaffordable, FontSize.Small);
 
                 // Give the "next level" preview whatever the price left over,
                 // rather than a fixed fraction that truncates on long effects.
@@ -71,7 +87,7 @@ public static class UpgradePanel
 
                 ui.T.DrawIn(ui.Sb, "→ " + def.EffectText(level + 1),
                     new Rectangle(rect.X, rect.Y + 41, rect.Width - 9, 16),
-                    Theme.TextFaint, FontSize.Small, Align.Right, maxWidth: room);
+                    Theme.UpgradeNext, FontSize.Small, Align.Right, maxWidth: room);
             }
 
             if (ui.Hovering(rect) && !ui.ClickConsumed)

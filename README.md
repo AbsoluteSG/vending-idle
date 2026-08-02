@@ -181,6 +181,12 @@ dotnet run --project tools/VendingIdle.SimTest -- --curve  # progression report
 | Click the delivery flap / `Space` | Shake: one bottle out of every stocked slot |
 | Click a compartment | Select it, and slide the slot menu in |
 | Click a price ticket | Buy that compartment |
+| `W` `A` `S` `D` | Move around the cabinet; at the edge, step into an open drawer |
+| Hold `Shift` | Target the selected slot's whole row -- the cabinet marks what it would hit |
+| `1`-`9` | Load that purchase drink into the target (pack drinks are excluded: their order is unpredictable) |
+| `Enter` | Shake, or submit inside a focused drawer |
+| `Esc` | Hand focus back to the cabinet |
+| `C` | Open a crate, or claim the drink waiting above it |
 | Mouse wheel | Pan the camera up and down the cabinet |
 | Click the supply crate | Open a crate (when the gauge is full) |
 | Click the floating drink | Claim the crate roll |
@@ -188,7 +194,7 @@ dotnet run --project tools/VendingIdle.SimTest -- --curve  # progression report
 | `Tab` | Send both menus away, or bring them back |
 | `M` / the speaker, top right | Mute or unmute all sound |
 | `R` | Restock everything |
-| `S` | Save |
+| `Ctrl`+`S` / `F5` | Save |
 
 Progress saves every 15 seconds and on exit, to whichever your platform expects:
 

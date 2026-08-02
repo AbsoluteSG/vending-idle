@@ -62,6 +62,28 @@ public sealed class TextRenderer
     }
 
     /// <summary>
+    /// Draws rotated about the text's own centre. Used for the payout popups,
+    /// which tilt a few degrees each so a burst of them reads as a scatter of
+    /// tickets rather than a stack of identical labels.
+    /// </summary>
+    public void DrawRotated(SpriteBatch sb, string text, Vector2 position, Color color,
+                            float rotation, FontSize size = FontSize.Normal)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+
+        var font = Font(size);
+        var origin = font.MeasureString(text) * 0.5f;
+
+        // Rotating about the centre means the draw position has to be the centre
+        // too, or the text would swing away from where the caller put it.
+        var centre = new Vector2(MathF.Round(position.X) + origin.X,
+                                 MathF.Round(position.Y) + origin.Y);
+
+        sb.DrawString(font, text, centre, color, rotation, origin,
+                      1f, SpriteEffects.None, 0f);
+    }
+
+    /// <summary>
     /// The largest rung at or below <paramref name="size"/> whose text fits
     /// <paramref name="maxWidth"/>. Never steps *up*: a caller asking for Small
     /// has made a decision about visual hierarchy, and silently promoting it

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
@@ -61,6 +63,28 @@ public sealed class VendingGame : Game, ISimEvents
 
     private KeyboardState _prevKeyboard;
     private int _framesDrawn;
+
+    /// <summary>
+    /// Which surface the keys are driving. The cabinet and the drawers both want
+    /// WASD, so exactly one of them owns it at a time and A/D at the grid edge is
+    /// how you cross between them -- the same direction you would move the mouse.
+    /// </summary>
+    private enum Focus
+    {
+        Machine,
+        Upgrades,
+        Inspector
+    }
+
+    private Focus _focus = Focus.Machine;
+    private int _upgradeFocus;
+    private int _inspectorFocus;
+
+    /// <summary>Shift held: act on the whole row rather than the one slot.</summary>
+    private bool _rowMode;
+
+    /// <summary>Enter pressed this frame, waiting for the focused panel to read it.</summary>
+    private bool _submitPressed;
 
     /// <summary>
     /// How far the camera has climbed the cabinet, in pixels. Zero is resting on
@@ -230,8 +254,24 @@ public sealed class VendingGame : Game, ISimEvents
     {
         var keyboard = Keyboard.GetState();
 
-        if (WasPressed(keyboard, Keys.Space) || WasPressed(keyboard, Keys.Enter))
-            PlayerShake();
+        _rowMode = keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift);
+
+        if (WasPressed(keyboard, Keys.Space)) PlayerShake();
+
+        // Enter submits whatever has focus. On the cabinet there is nothing to
+        // submit, so it stays a shake.
+        if (WasPressed(keyboard, Keys.Enter))
+        {
+            if (_focus == Focus.Machine) PlayerShake();
+            else _submitPressed = true;
+        }
+
+        if (WasPressed(keyboard, Keys.Escape)) _focus = Focus.Machine;
+
+        HandleNavigation(keyboard);
+        HandleDrinkHotkeys(keyboard);
+
+        if (WasPressed(keyboard, Keys.C)) HandleCrateKey();
 
         if (WasPressed(keyboard, Keys.R))
         {
@@ -239,7 +279,12 @@ public sealed class VendingGame : Game, ISimEvents
             else _sfx.Denied();
         }
 
-        if (WasPressed(keyboard, Keys.S))
+        // S is a navigation key now, so saving moved off it. Ctrl+S is the
+        // shape every other program uses, and F5 covers keyboards where the
+        // chord is awkward.
+        var ctrl = keyboard.IsKeyDown(Keys.LeftControl) || keyboard.IsKeyDown(Keys.RightControl);
+
+        if ((ctrl && WasPressed(keyboard, Keys.S)) || WasPressed(keyboard, Keys.F5))
             SaveSystem.Save(_state, _options.SavePath);
 
         if (WasPressed(keyboard, Keys.M)) ToggleMute();
@@ -256,6 +301,208 @@ public sealed class VendingGame : Game, ISimEvents
         }
 
         _prevKeyboard = keyboard;
+    }
+
+    /// <summary>
+    /// WASD across the cabinet, or down a drawer's list once it has focus.
+    /// Crossing happens at the grid edge: A from the leftmost column steps into
+    /// the upgrades drawer, D from the rightmost into the slot drawer, and the
+    /// opposite direction steps back out.
+    /// </summary>
+    private void HandleNavigation(KeyboardState keyboard)
+    {
+        // Ctrl+S is a save, not a step down.
+        if (keyboard.IsKeyDown(Keys.LeftControl) || keyboard.IsKeyDown(Keys.RightControl)) return;
+
+        var up = WasPressed(keyboard, Keys.W);
+        var down = WasPressed(keyboard, Keys.S);
+        var left = WasPressed(keyboard, Keys.A);
+        var right = WasPressed(keyboard, Keys.D);
+
+        if (!up && !down && !left && !right) return;
+
+        switch (_focus)
+        {
+            case Focus.Upgrades:
+                if (up) _upgradeFocus--;
+                if (down) _upgradeFocus++;
+                _upgradeFocus = Math.Clamp(_upgradeFocus, 0, UpgradeDatabase.Count - 1);
+                if (right) _focus = Focus.Machine;
+                return;
+
+            case Focus.Inspector:
+                if (up) _inspectorFocus--;
+                if (down) _inspectorFocus++;
+                _inspectorFocus = Math.Clamp(_inspectorFocus, 0, DrinkDatabase.All.Count - 1);
+                if (left) _focus = Focus.Machine;
+                return;
+        }
+
+        var column = _machine.SelectedSlot % Balance.Columns;
+        var row = _machine.SelectedSlot / Balance.Columns;
+
+        if (left && column == 0 && _upgradeDrawer.IsOpen) { _focus = Focus.Upgrades; return; }
+        if (right && column == Balance.Columns - 1 && _inspectorDrawer.IsOpen)
+        {
+            _focus = Focus.Inspector;
+            return;
+        }
+
+        if (left) column--;
+        if (right) column++;
+
+        // W climbs the cabinet, which is upward on screen and *later* in index
+        // order -- row 0 is the bottom shelf.
+        if (up) row++;
+        if (down) row--;
+
+        column = Math.Clamp(column, 0, Balance.Columns - 1);
+        row = Math.Clamp(row, 0, _state.RowCount - 1);
+
+        var target = row * Balance.Columns + column;
+        if (target >= 0 && target < _state.Slots.Count) _machine.SelectedSlot = target;
+
+        // Follow the selection with the camera, so navigating up a tall cabinet
+        // does not walk the cursor off the top of the screen.
+        FollowSelection();
+    }
+
+    /// <summary>
+    /// Number keys load the Nth *purchase* drink. Pack drinks are deliberately
+    /// left off: they arrive in an order nobody can predict, so a fixed digit
+    /// could not mean the same thing twice.
+    /// </summary>
+    private void HandleDrinkHotkeys(KeyboardState keyboard)
+    {
+        for (var n = 1; n <= 9; n++)
+        {
+            if (!WasPressed(keyboard, Keys.D0 + n) && !WasPressed(keyboard, Keys.NumPad0 + n))
+                continue;
+
+            var purchase = DrinkDatabase.All
+                .Where(d => d.Source == DrinkSource.Purchase)
+                .ToList();
+
+            if (n > purchase.Count) { _sfx.Denied(); return; }
+
+            var drink = purchase[n - 1];
+            if (!DrinkDatabase.IsUnlocked(drink, _state)) { _sfx.Denied(); return; }
+
+            var loaded = 0;
+            foreach (var index in TargetedSlots())
+                if (_state.TryAssignDrink(index, drink.Id)) loaded++;
+
+            if (loaded > 0) _sfx.Purchase();
+            else _sfx.Denied();
+
+            return;
+        }
+    }
+
+    /// <summary>
+    /// The slots a keyed action applies to: the selection, or its whole row while
+    /// shift is held.
+    /// </summary>
+    private IEnumerable<int> TargetedSlots()
+    {
+        if (!_rowMode)
+        {
+            yield return _machine.SelectedSlot;
+            yield break;
+        }
+
+        var row = _machine.SelectedSlot / Balance.Columns;
+        for (var column = 0; column < Balance.Columns; column++)
+        {
+            var index = row * Balance.Columns + column;
+            if (index >= 0 && index < _state.Slots.Count) yield return index;
+        }
+    }
+
+    /// <summary>
+    /// One key for the whole crate: claim a reveal if one is waiting, otherwise
+    /// open a crate. They are never both available -- a pending reveal blocks the
+    /// crate -- so there is nothing for a second binding to disambiguate.
+    /// </summary>
+    private void HandleCrateKey()
+    {
+        if (_state.PendingRevealId is not null)
+        {
+            RedeemCrate();
+            return;
+        }
+
+        if (_state.TryOpenPack(_rng) is not null)
+        {
+            _crate.BeginReveal();
+            _sfx.Purchase();
+        }
+        else
+        {
+            _sfx.Denied();
+        }
+    }
+
+    /// <summary>
+    /// Claims the pending reveal and puts the result on screen. Shared by the
+    /// click on the floating drink and by the C key, so the two can never drift
+    /// into showing different things for the same event.
+    /// </summary>
+    private void RedeemCrate()
+    {
+        if (_state.RedeemReveal() is not { } redeem) return;
+
+        var drink = DrinkDatabase.Get(redeem.DrinkId)!;
+        var origin = new Vector2(_crate.RevealRect.Center.X - 24, _crate.RevealRect.Y - 6);
+
+        _fx.SpawnPopup(drink.Name, origin, Theme.FromPacked(drink.Color), FontSize.Normal);
+        _fx.SpawnPopup(
+            redeem.WasNew ? "NEW!" : redeem.AtMax ? "MAX" : $"Lv {redeem.Level}",
+            origin + new Vector2(8, -22),
+            redeem.WasNew ? Theme.Positive : Theme.Accent,
+            FontSize.Large);
+
+        // A duplicate at its ceiling hands tokens back; say so, or the refund is
+        // invisible and the pull just reads as wasted.
+        if (redeem.Refund > 0.0)
+            _fx.SpawnPopup($"+{Money.Format(redeem.Refund)} tk",
+                           origin + new Vector2(0, 18), Theme.Money, FontSize.Small);
+    }
+
+    /// <summary>
+    /// Paints the slots a shifted action would hit. Drawn over the cabinet in
+    /// world space, after it, so the marks sit on the glass rather than behind
+    /// the bottles -- the point is to answer "what am I about to change?" before
+    /// the key is pressed, not after.
+    /// </summary>
+    private void DrawRowTargeting()
+    {
+        if (!_rowMode || _focus != Focus.Machine) return;
+
+        foreach (var index in TargetedSlots())
+        {
+            if (!_machine.TryGetCellRect(index, out var cell)) continue;
+
+            _ui.P.FillRounded(_ui.Sb, cell, 4, Theme.Accent * 0.20f);
+            _ui.P.OutlineRounded(_ui.Sb, cell, 4, Theme.Accent * 0.85f, 2);
+        }
+    }
+
+    /// <summary>Keeps the camera on the selected slot when the keys move it.</summary>
+    private void FollowSelection()
+    {
+        if (!_machine.TryGetCellRect(_machine.SelectedSlot, out var cell)) return;
+
+        var screen = new Rectangle(0, 0, ScreenWidth, ScreenHeight);
+        var top = cell.Y + _panTarget;
+        var bottom = cell.Bottom + _panTarget;
+
+        const int margin = 80;
+
+        if (top < screen.Y + margin) _panTarget += screen.Y + margin - top;
+        else if (bottom > screen.Bottom - margin) _panTarget -= bottom - (screen.Bottom - margin);
+
+        _panTarget = MathHelper.Clamp(_panTarget, 0f, MaxPan());
     }
 
     /// <summary>
@@ -312,6 +559,12 @@ public sealed class VendingGame : Game, ISimEvents
 
     public void OnDispense(in ClickResult result, bool fromCustomer)
     {
+        // A crit is the machine lurching, not the player pushing it, so it kicks
+        // the camera wherever it came from -- an idle crit used to be silent and
+        // read as the number simply jumping on its own. Lighter than a shake so a
+        // busy machine hums rather than judders.
+        if (result.Crit) _fx.Shake(fromCustomer ? 0.30f : 0.45f);
+
         // Popups rise from the top of the cell so they clear the rack below.
         var origin = result.SlotIndex >= 0 && _machine.TryGetCellRect(result.SlotIndex, out var cell)
             ? new Vector2(cell.Center.X - 16, cell.Y - 2)
@@ -432,13 +685,22 @@ public sealed class VendingGame : Game, ISimEvents
 
         // Drawers are hit-tested before the cabinet so a click on an open menu
         // can never fall through to the delivery flap behind it.
+        // Enter is consumed by whichever panel holds focus; the machine's own
+        // Enter is handled in HandleKeyboard, so only one of them can fire.
+        var submit = _submitPressed;
+        _submitPressed = false;
+
         UpgradeId? upgradeClicked = null;
         if (_upgradeDrawer.Visible)
-            upgradeClicked = UpgradePanel.Draw(_ui, _state, upgradeBounds);
+            upgradeClicked = UpgradePanel.Draw(_ui, _state, upgradeBounds,
+                _focus == Focus.Upgrades ? _upgradeFocus : -1,
+                _focus == Focus.Upgrades && submit);
 
         var inspectorAction = InspectorAction.None;
         if (_inspectorDrawer.Visible)
-            inspectorAction = SlotInspector.Draw(_ui, _state, inspectorBounds, _machine.SelectedSlot);
+            inspectorAction = SlotInspector.Draw(_ui, _state, inspectorBounds, _machine.SelectedSlot,
+                _focus == Focus.Inspector ? _inspectorFocus : -1,
+                _focus == Focus.Inspector && submit);
 
         if (_upgradeDrawer.DrawTab(_ui, upgradeBounds, screen)) _upgradeDrawer.Toggle();
         if (_inspectorDrawer.DrawTab(_ui, inspectorBounds, screen)) _inspectorDrawer.Toggle();
@@ -450,6 +712,8 @@ public sealed class VendingGame : Game, ISimEvents
         var crateAction = _crate.HandleInput(_ui, _state);
 
         var machineAction = _machine.Draw(_ui, _state, machineBounds, _fx, _elapsed, _smoothedIncome);
+
+        DrawRowTargeting();
 
         // Effects are clipped to the cabinet plus the crate's airspace, so
         // falling drinks and redeem popups cannot spill over the rest of the room.
@@ -495,18 +759,7 @@ public sealed class VendingGame : Game, ISimEvents
         if (crate == CrateAction.Open && _state.TryOpenPack(_rng) is not null)
             _crate.BeginReveal();
 
-        if (crate == CrateAction.Redeem && _state.RedeemReveal() is { } redeem)
-        {
-            var drink = DrinkDatabase.Get(redeem.DrinkId)!;
-            var origin = new Vector2(_crate.RevealRect.Center.X - 24, _crate.RevealRect.Y - 6);
-
-            _fx.SpawnPopup(drink.Name, origin, Theme.FromPacked(drink.Color), FontSize.Normal);
-            _fx.SpawnPopup(
-                redeem.WasNew ? "NEW!" : redeem.AtMax ? "MAX" : $"Lv {redeem.Level}",
-                origin + new Vector2(8, -22),
-                redeem.WasNew ? Theme.Positive : Theme.Accent,
-                FontSize.Large);
-        }
+        if (crate == CrateAction.Redeem) RedeemCrate();
 
         if (machine.RestockAll)
         {

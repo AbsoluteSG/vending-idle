@@ -24,6 +24,7 @@ public sealed class Effects
         public float MaxLife;
         public Color Color;
         public FontSize Size;
+        public float Rotation;
     }
 
     private struct Bottle
@@ -103,6 +104,12 @@ public sealed class Effects
         if (_popups.Count >= MaxPopups) return;
 
         var drift = (float)(_rng.NextDouble() * 22.0 - 11.0);
+
+        // A few degrees either way. Idle games print the same number hundreds of
+        // times; identical labels stack into a solid block, and a small tilt is
+        // enough to read them as separate tickets without looking sloppy.
+        var tilt = MathHelper.ToRadians((float)(_rng.NextDouble() * 10.0 - 5.0));
+
         _popups.Add(new Popup
         {
             Text = text,
@@ -111,7 +118,8 @@ public sealed class Effects
             Life = 0f,
             MaxLife = size == FontSize.Large ? 1.1f : 0.8f,
             Color = color,
-            Size = size
+            Size = size,
+            Rotation = tilt
         });
     }
 
@@ -237,7 +245,7 @@ public sealed class Effects
         {
             var t = p.Life / p.MaxLife;
             var alpha = MathHelper.Clamp(1f - t * t, 0f, 1f);
-            ui.T.Draw(ui.Sb, p.Text, p.Position, p.Color * alpha, p.Size);
+            ui.T.DrawRotated(ui.Sb, p.Text, p.Position, p.Color * alpha, p.Rotation, p.Size);
         }
     }
 

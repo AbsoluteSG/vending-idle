@@ -22,7 +22,15 @@ public static class SlotInspector
     /// <summary>Wheel scroll for the drink list -- twelve drinks no longer fit the panel.</summary>
     private static float _scroll;
 
-    public static InspectorAction Draw(Ui ui, GameState state, Rectangle bounds, int selectedIndex)
+    /// <param name="focusIndex">
+    /// Keyboard-focused drink row, or -1 when the pointer owns this panel. The
+    /// list is the only thing keys drive here: the buttons above it are a handful
+    /// of one-shot actions that already have their own bindings, and threading
+    /// focus through them would make W/S walk past things it cannot press.
+    /// </param>
+    /// <param name="activate">Enter was pressed while this panel held focus.</param>
+    public static InspectorAction Draw(Ui ui, GameState state, Rectangle bounds, int selectedIndex,
+                                       int focusIndex = -1, bool activate = false)
     {
         var action = InspectorAction.None;
 
@@ -162,8 +170,25 @@ public static class SlotInspector
         var mouseInList = listArea.Contains(ui.Mouse);
         var rowY = listArea.Y - (int)_scroll;
 
+        // Keeps the focused row on screen when the keys walk off the end of the
+        // visible window -- a focus you cannot see is worse than none.
+        if (focusIndex >= 0)
+        {
+            var focusTop = focusIndex * rowStride;
+            var focusBottom = focusTop + rowStride;
+
+            if (focusTop < _scroll) _scroll = focusTop;
+            else if (focusBottom > _scroll + listArea.Height)
+                _scroll = focusBottom - listArea.Height;
+
+            _scroll = MathHelper.Clamp(_scroll, 0f, maxScroll);
+            rowY = listArea.Y - (int)_scroll;
+        }
+
+        var row = -1;
         foreach (var def in DrinkDatabase.All)
         {
+            row++;
             var rowRect = new Rectangle(body.X, rowY, body.Width, 40);
             rowY += rowStride;
 
@@ -180,6 +205,12 @@ public static class SlotInspector
                    : Theme.ButtonDisabled;
 
             ui.P.FillRounded(ui.Sb, rowRect, 6, bg);
+
+            if (row == focusIndex)
+            {
+                ui.P.OutlineRounded(ui.Sb, rowRect, 6, Theme.Accent, 2);
+                if (activate && unlocked && !isCurrent) action.AssignDrinkId = def.Id;
+            }
 
             var swatch = new Rectangle(rowRect.X + 8, rowRect.Y + 11, 12, 18);
             ui.P.FillRounded(ui.Sb, swatch, 3,
