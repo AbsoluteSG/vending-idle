@@ -11,7 +11,13 @@ namespace VendingIdle.UI;
 /// </summary>
 public sealed class Effects
 {
-    private const int MaxPopups = 32;
+    /// <summary>
+    /// Raised from 32 once cascades started firing several payouts per hop. The
+    /// cap is a readability limit as much as a memory one -- past roughly this
+    /// many the screen is texture rather than numbers -- but under it, density is
+    /// the point.
+    /// </summary>
+    private const int MaxPopups = 96;
     private const int MaxBottles = 64;
     private const float Gravity = 1900f;
 

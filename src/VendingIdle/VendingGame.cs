@@ -41,6 +41,7 @@ public sealed class VendingGame : Game, ISimEvents
     private readonly Effects _fx = new();
     private readonly Sfx _sfx = new();
     private readonly Crate _crate = new();
+    private readonly Banners _banners = new();
 
     // Both start tucked away: the cabinet is the scene, and a menu only exists
     // once you have asked for it.
@@ -125,6 +126,15 @@ public sealed class VendingGame : Game, ISimEvents
 
         _machine.SelectedSlot = FirstUnlockedSlot();
         ApplyDrawerOption();
+
+        if (_options.Juice is { } juice)
+        {
+            var tier = juice.Equals("mega", StringComparison.OrdinalIgnoreCase) ? BannerTier.Mega
+                     : juice.Equals("near", StringComparison.OrdinalIgnoreCase) ? BannerTier.Near
+                     : BannerTier.Slam;
+
+            _banners.Show("CRAZY FIZZ", tier, Theme.FromPacked(0xF2D43D), "x6 CHAIN   +$1,240.00");
+        }
 
         if (_options.ForceReveal && _state.PendingRevealId is null)
         {
@@ -224,6 +234,7 @@ public sealed class VendingGame : Game, ISimEvents
         _sfx.BeginFrame();
         _fx.Update((float)dt);
         _crate.Update((float)dt, _state);
+        _banners.Update((float)dt);
 
         // Ease the camera toward where the wheel asked for. Exponential, so it
         // arrives quickly without ever quite snapping.
@@ -444,6 +455,49 @@ public sealed class VendingGame : Game, ISimEvents
     }
 
     /// <summary>
+    /// Turns a cascade into noise proportional to its length. The thresholds are
+    /// in Balance, because what counts as a big moment moves whenever the chain
+    /// economy does.
+    /// </summary>
+    private void AnnounceCascade(in ClickResult result)
+    {
+        var hops = result.ChainLength;
+        if (hops <= 0) return;
+
+        // The tick walks up the scale across the cascade, so the run is audible
+        // as a run rather than as a burst.
+        for (var i = 0; i < hops; i++) _sfx.Chain(i + 1);
+
+        if (hops < Balance.ChainBannerHops) return;
+
+        var drink = DrinkDatabase.Get(result.DrinkId);
+        var name = (drink?.Name ?? "Chain").ToUpperInvariant();
+        var color = drink is not null ? Theme.FromPacked(drink.Color) : Theme.Accent;
+
+        var total = result.Payout;
+        foreach (var hop in result.Chain!) total += hop.Payout;
+
+        var subtitle = $"x{hops} CHAIN   +{Money.Cash(total)}";
+
+        if (hops >= Balance.ChainMegaHops)
+        {
+            _banners.Show(name, BannerTier.Mega, color, subtitle);
+            _sfx.Banner(mega: true);
+            _fx.Shake(1f);
+        }
+        else if (hops >= Balance.ChainSlamHops)
+        {
+            _banners.Show(name, BannerTier.Slam, color, subtitle);
+            _sfx.Banner(mega: false);
+            _fx.Shake(0.7f);
+        }
+        else
+        {
+            _banners.Show(name, BannerTier.Near, color);
+        }
+    }
+
+    /// <summary>
     /// Claims the pending reveal and puts the result on screen. Shared by the
     /// click on the floating drink and by the C key, so the two can never drift
     /// into showing different things for the same event.
@@ -461,6 +515,31 @@ public sealed class VendingGame : Game, ISimEvents
             origin + new Vector2(8, -22),
             redeem.WasNew ? Theme.Positive : Theme.Accent,
             FontSize.Large);
+
+        // Rarity is the whole chase, so the tail of the collection announces
+        // itself. Epic and up take the screen; anything below stays local, or
+        // the commons -- which arrive every few crates -- would never stop.
+        var color = Theme.FromPacked(drink.Color);
+        var tier = drink.Rarity switch
+        {
+            Rarity.Mythic or Rarity.Legendary => BannerTier.Mega,
+            Rarity.Epic => BannerTier.Slam,
+            _ => BannerTier.Near
+        };
+
+        if (drink.Rarity >= Rarity.Epic)
+        {
+            var label = redeem.WasNew ? $"NEW {drink.Rarity.ToString().ToUpperInvariant()}"
+                                      : drink.Rarity.ToString().ToUpperInvariant();
+
+            _banners.Show(drink.Name.ToUpperInvariant(), tier, color, label);
+            _sfx.Fanfare();
+            _fx.Shake(tier == BannerTier.Mega ? 1f : 0.7f);
+        }
+        else if (redeem.WasNew)
+        {
+            _banners.Show(drink.Name.ToUpperInvariant(), BannerTier.Near, color);
+        }
 
         // A duplicate at its ceiling hands tokens back; say so, or the refund is
         // invisible and the pull just reads as wasted.
@@ -563,7 +642,13 @@ public sealed class VendingGame : Game, ISimEvents
         // the camera wherever it came from -- an idle crit used to be silent and
         // read as the number simply jumping on its own. Lighter than a shake so a
         // busy machine hums rather than judders.
-        if (result.Crit) _fx.Shake(fromCustomer ? 0.30f : 0.45f);
+        if (result.Crit)
+        {
+            _fx.Shake(fromCustomer ? 0.30f : 0.45f);
+            _sfx.Crit();
+        }
+
+        AnnounceCascade(result);
 
         // Popups rise from the top of the cell so they clear the rack below.
         var origin = result.SlotIndex >= 0 && _machine.TryGetCellRect(result.SlotIndex, out var cell)
@@ -727,6 +812,8 @@ public sealed class VendingGame : Game, ISimEvents
         DrawHint();
 
         if (_offlineReport is not null) DrawOfflineToast(screen);
+
+        _banners.Draw(_ui, screen, machineBounds);
 
         // Drawn last, so it stays on top of a drawer that has slid out under it.
         // The corner belongs to the player, not to whichever menu is open.

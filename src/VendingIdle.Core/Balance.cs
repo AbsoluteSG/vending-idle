@@ -78,6 +78,20 @@ public static class Balance
     /// <summary>Extra hops per level of the Longer Coils upgrade.</summary>
     public const int ChainHopsPerLevel = 1;
 
+    // ---- Spectacle -------------------------------------------------------
+    // Thresholds for the feedback ladder. They live here rather than in the draw
+    // code because they are balance, not presentation: what counts as a big
+    // moment moves whenever the chain economy moves.
+
+    /// <summary>Cascade length that earns a banner near the machine.</summary>
+    public const int ChainBannerHops = 3;
+
+    /// <summary>Cascade length that earns the full-screen slam.</summary>
+    public const int ChainSlamHops = 4;
+
+    /// <summary>Cascade length that earns the slam plus speed lines and a held beat.</summary>
+    public const int ChainMegaHops = 8;
+
     public const double CritMultiplier = 2.0;
     public const double CritChanceBase = 0.02;
     public const double CritChancePerLevel = 0.02;

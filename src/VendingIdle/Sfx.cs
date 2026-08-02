@@ -5,9 +5,11 @@ using Microsoft.Xna.Framework.Content;
 namespace VendingIdle;
 
 /// <summary>
-/// Every sound the game makes. Three cues, all tied to something the player did
-/// themselves -- customers buying in the background stay silent, because a sound
-/// per idle tick becomes a drone within a minute of hiring the second customer.
+/// Every sound the game makes. The quiet ones are tied to something the player
+/// did themselves -- customers buying in the background stay silent, because a
+/// sound per idle tick becomes a drone within a minute of hiring the second
+/// customer. The loud ones (crits, cascades, rare pulls) fire whoever caused
+/// them, because those are events rather than acknowledgements.
 ///
 /// Nothing in here is allowed to take the game down. A machine with no audio
 /// device (a CI box, a headless screenshot run) throws from the audio subsystem,
@@ -21,6 +23,10 @@ public sealed class Sfx
     private const float DeniedVolume = 0.40f;
     private const float PurchaseVolume = 0.50f;
     private const float BottleVolume = 0.38f;
+    private const float ChainVolume = 0.34f;
+    private const float CritVolume = 0.42f;
+    private const float BannerVolume = 0.55f;
+    private const float FanfareVolume = 0.60f;
 
     /// <summary>
     /// Clinks allowed per frame. A late-game shake empties two dozen slots at
@@ -30,6 +36,13 @@ public sealed class Sfx
     /// one fat clatter instead of a wall.
     /// </summary>
     private const int BottlesPerFrame = 3;
+
+    /// <summary>
+    /// Chain ticks allowed per frame. A late-game shake can set off cascades in a
+    /// dozen slots at once; without a budget that is fifty overlapping ticks and
+    /// the rising pitch -- the entire point of the cue -- is lost in the mush.
+    /// </summary>
+    private const int ChainTicksPerFrame = 6;
 
     /// <summary>
     /// The music bed sits below every cue. It is the one sound that is always
@@ -44,10 +57,16 @@ public sealed class Sfx
     private SoundEffect? _purchase;
     private SoundEffect? _bottle;
 
+    private SoundEffect? _chain;
+    private SoundEffect? _crit;
+    private SoundEffect? _banner;
+    private SoundEffect? _fanfare;
+
     private SoundEffect? _music;
     private SoundEffectInstance? _musicInstance;
 
     private int _bottleBudget;
+    private int _chainBudget;
 
     /// <summary>
     /// False once the audio device or the content has failed. Distinct from
@@ -84,6 +103,10 @@ public sealed class Sfx
             _denied = content.Load<SoundEffect>("Audio/denied");
             _purchase = content.Load<SoundEffect>("Audio/purchase");
             _bottle = content.Load<SoundEffect>("Audio/bottle");
+            _chain = content.Load<SoundEffect>("Audio/chain");
+            _crit = content.Load<SoundEffect>("Audio/crit");
+            _banner = content.Load<SoundEffect>("Audio/banner");
+            _fanfare = content.Load<SoundEffect>("Audio/fanfare");
 
             _music = content.Load<SoundEffect>("Audio/bgm");
             _musicInstance = _music.CreateInstance();
@@ -149,7 +172,11 @@ public sealed class Sfx
     public void Purchase() => Play(_purchase, PurchaseVolume, Vary(0.06f));
 
     /// <summary>Resets the per-frame clink budget. Call once per update.</summary>
-    public void BeginFrame() => _bottleBudget = BottlesPerFrame;
+    public void BeginFrame()
+    {
+        _bottleBudget = BottlesPerFrame;
+        _chainBudget = ChainTicksPerFrame;
+    }
 
     /// <summary>
     /// A bottle hitting the tray. <paramref name="pitch"/> is the drink's own
@@ -166,6 +193,38 @@ public sealed class Sfx
 
         Play(_bottle, BottleVolume * duck, Math.Clamp(pitch + Vary(0.07f), -1f, 1f));
     }
+
+    /// <summary>
+    /// One rung of a cascade. The pitch climbs with the hop index, so a long
+    /// chain walks up the scale -- the cheapest way to make a combo *sound* like
+    /// it is building rather than like the same tick played six times.
+    ///
+    /// Steps of a tone and a bit, flattening out past the top of the range so a
+    /// very long cascade does not end in a squeak.
+    /// </summary>
+    public void Chain(int hop)
+    {
+        if (_chainBudget <= 0) return;
+        _chainBudget--;
+
+        var steps = Math.Min(hop, 10);
+        var pitch = Math.Clamp(0.06f * steps, 0f, 0.85f);
+
+        // Later hops also come in slightly louder, so the run swells.
+        var volume = ChainVolume * (1f + Math.Min(hop, 8) * 0.05f);
+
+        Play(_chain, Math.Min(volume, 1f), pitch);
+    }
+
+    /// <summary>A crit landing. Sits above the clinks so it cuts through a busy shake.</summary>
+    public void Crit() => Play(_crit, CritVolume, Vary(0.10f));
+
+    /// <summary>The full-screen slam.</summary>
+    public void Banner(bool mega) =>
+        Play(_banner, mega ? BannerVolume : BannerVolume * 0.75f, mega ? -0.25f : -0.10f);
+
+    /// <summary>Something rare came out of a crate.</summary>
+    public void Fanfare() => Play(_fanfare, FanfareVolume, 0.15f);
 
     private float Vary(float spread) => (float)((_rng.NextDouble() * 2.0 - 1.0) * spread);
 

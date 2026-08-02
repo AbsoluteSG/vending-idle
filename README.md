@@ -213,6 +213,44 @@ unlocked slots into the bottom of the new grid, keeping their drinks, stock and
 automation. Positions are not meaningful in themselves, only the count, the contents,
 and the rule that a slot needs one below it.
 
+### Feedback ladder
+
+Late game the screen should be busy. That is a design goal, not an accident -- but
+a full-screen overlay on *every* proc would mean never seeing the cabinet again, so
+density and impact are produced by different mechanisms. Many small things make it
+busy; a few rare big ones make it land.
+
+| Tier | Fires on | Treatment |
+|---|---|---|
+| local | any sale | payout popup, tilted a few degrees |
+| accent | crit, Bottomless/Courier proc | tinted popup, camera kick, crit sting |
+| near | cascade of 3 | banner above the cabinet, nothing obscured |
+| slam | cascade of 4+, Epic pull | full-screen text, darkened surround, bell |
+| mega | cascade of 8+, Legendary/Mythic pull | slam plus speed lines and a longer hold |
+
+Banner text is the *drink's* name -- "CRAZY FIZZ" -- so the rarest things in the
+collection produce the loudest moments, which is most of what a Mythic is for.
+
+Three rules keep it from collapsing into noise:
+
+**One banner at a time.** A late-game shake can set off several qualifying cascades
+in a single frame. Six overlapping slams is not six times the impact, it is a smear,
+so a louder banner replaces the current one and an equal or quieter one is dropped.
+Nothing queues -- a banner that played out ten seconds after its cascade would be
+announcing something the player has already forgotten.
+
+**The overlay is a pair of gradients, not a wash.** Dark at the top and bottom of
+the screen, clear through the middle. The cabinet stays visible, which is the
+difference between spectacle and simply losing the game behind a black rectangle.
+
+**Everything is budgeted.** Bottle clinks were already capped at three per frame;
+chain ticks are capped at six, or a dozen simultaneous cascades drown the rising
+pitch that is the entire point of the cue. Popups cap at 96 -- high enough that
+density is real, low enough that the screen stays numbers rather than texture.
+
+The chain tick climbs in pitch with the hop index, so a long cascade walks up the
+scale and a combo *sounds* like it is building.
+
 ### Command-line flags
 
 | Flag | Purpose |
@@ -223,6 +261,7 @@ and the rule that a slot needs one below it.
 | `--drawers open\|left\|right` | Slide menus in on launch (default: both closed) |
 | `--mute` | Start silent for this run (implied by `--screenshot`); does not change the saved setting |
 | `--reveal` | Debug: grant tokens and open a crate on launch |
+| `--juice near\|slam\|mega` | Debug: force a banner tier on launch, so the big tiers can be looked at on demand |
 
 `--screenshot` exists so the game can be smoke-tested headlessly:
 

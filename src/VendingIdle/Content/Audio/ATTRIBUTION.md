@@ -7,10 +7,12 @@ a licence audit.
 
 ## Sound effects
 
-The four cues come from Kenney's **Interface Sounds** pack (v1.0).
+All CC0, all from Kenney, across three packs:
 
-- Source: <https://kenney.nl/assets/interface-sounds>
-- Licence: <http://creativecommons.org/publicdomain/zero/1.0/>
+- **Interface Sounds** (v1.0) -- <https://kenney.nl/assets/interface-sounds>
+- **Impact Sounds** -- <https://kenney.nl/assets/impact-sounds>
+- **UI Audio** -- <https://kenney.nl/assets/ui-audio>
+- Licence for all three: <http://creativecommons.org/publicdomain/zero/1.0/>
 
 Files are renamed to their role in the game so that swapping one out is a matter
 of dropping a new `.ogg` over it, without touching any code:
@@ -21,8 +23,12 @@ of dropping a new `.ogg` over it, without touching any code:
 | `denied.ogg`   | `error_004.ogg`        | The player asks for something unaffordable |
 | `purchase.ogg` | `confirmation_001.ogg` | A purchase goes through                    |
 | `bottle.ogg`   | *(not recorded)*       | A bottle lands in the tray, pitched per drink |
+| `chain.ogg`    | UI Audio `rollover1.ogg` | One hop of a cascade, pitched up per hop |
+| `crit.ogg`     | Impact `impactGlass_light_000.ogg` | A crit lands |
+| `banner.ogg`   | Impact `impactBell_heavy_001.ogg` | A full-screen slam |
+| `fanfare.ogg`  | Impact `impactBell_heavy_000.ogg` | An Epic or better comes out of a crate |
 
-All four are short (0.10 s – 0.29 s). Anything much longer overlaps itself when
+The first four are short (0.10 s – 0.29 s). Anything much longer overlaps itself when
 a player shakes repeatedly, which is what makes UI audio grating.
 
 ## Music

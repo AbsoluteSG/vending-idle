@@ -84,3 +84,27 @@
 /processor:SoundEffectProcessor
 /processorParam:Quality=Best
 /build:Audio/bgm.ogg
+
+#begin Audio/chain.ogg
+/importer:OggImporter
+/processor:SoundEffectProcessor
+/processorParam:Quality=Best
+/build:Audio/chain.ogg
+
+#begin Audio/crit.ogg
+/importer:OggImporter
+/processor:SoundEffectProcessor
+/processorParam:Quality=Best
+/build:Audio/crit.ogg
+
+#begin Audio/banner.ogg
+/importer:OggImporter
+/processor:SoundEffectProcessor
+/processorParam:Quality=Best
+/build:Audio/banner.ogg
+
+#begin Audio/fanfare.ogg
+/importer:OggImporter
+/processor:SoundEffectProcessor
+/processorParam:Quality=Best
+/build:Audio/fanfare.ogg

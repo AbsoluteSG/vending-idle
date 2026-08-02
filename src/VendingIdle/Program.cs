@@ -45,6 +45,13 @@ public sealed class LaunchOptions
     /// </summary>
     public bool ForceReveal { get; private set; }
 
+    /// <summary>
+    /// Debug: force a banner tier on launch. The big feedback tiers only fire on
+    /// rare events, which makes them near-impossible to eyeball or screenshot on
+    /// demand -- this is how they get looked at.
+    /// </summary>
+    public string? Juice { get; private set; }
+
     public static LaunchOptions Parse(string[] args)
     {
         var o = new LaunchOptions();
@@ -76,6 +83,10 @@ public sealed class LaunchOptions
 
                 case "--mute":
                     o.Muted = true;
+                    break;
+
+                case "--juice":
+                    if (i + 1 < args.Length) o.Juice = args[++i];
                     break;
 
                 case "--reveal":
