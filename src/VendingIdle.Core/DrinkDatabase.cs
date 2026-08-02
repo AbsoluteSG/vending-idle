@@ -56,6 +56,18 @@ public static class DrinkDatabase
         },
         new()
         {
+            Id = "ginger_snap",
+            Name = "Ginger Snap",
+            Rarity = Rarity.Uncommon,
+            Color = 0xD9A441,
+            Value = 19.0,
+            RestockUnitCost = 7.4,
+            RestockGrowth = 1.015,
+            UnlockAtEarned = 600_000.0,
+            SoundPitch = -0.06
+        },
+        new()
+        {
             Id = "grape_rush",
             Name = "Grape Rush",
             Rarity = Rarity.Rare,
@@ -77,6 +89,18 @@ public static class DrinkDatabase
             RestockGrowth = 1.03,
             UnlockAtEarned = 100_000_000.0,
             SoundPitch = -0.28
+        },
+        new()
+        {
+            Id = "arctic_tonic",
+            Name = "Arctic Tonic",
+            Rarity = Rarity.Epic,
+            Color = 0x4FC3D9,
+            Value = 260.0,
+            RestockUnitCost = 112.0,
+            RestockGrowth = 1.035,
+            UnlockAtEarned = 550_000_000.0,
+            SoundPitch = -0.35
         },
         new()
         {
@@ -173,6 +197,90 @@ public static class DrinkDatabase
             RestockUnitCost = 10.0,
             RestockGrowth = 1.02,
             SoundPitch = -0.22
+        },
+
+        // The combo set. Every one of these is deliberately underwhelming read
+        // on its own card -- Relay Rum does nothing at all without something to
+        // chain, and Jumper Juice only starts cascades it cannot itself extend.
+        // They are priced as utility, below the value tier they sit in, because
+        // the payoff is meant to come from what they are next to.
+        new()
+        {
+            Id = "relay_rum",
+            Name = "Relay Rum",
+            Rarity = Rarity.Epic,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.ChainExtendAura,
+            Color = 0xE67E22,
+            Value = 26.0,
+            RestockUnitCost = 12.0,
+            RestockGrowth = 1.02,
+            SoundPitch = -0.18
+        },
+        new()
+        {
+            Id = "jumper_juice",
+            Name = "Jumper Juice",
+            Rarity = Rarity.Common,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.SparkChain,
+            Color = 0xA3D94F,
+            Value = 2.6,
+            RestockUnitCost = 1.0,
+            RestockGrowth = 1.0,
+            SoundPitch = 0.27
+        },
+        new()
+        {
+            Id = "twin_tap",
+            Name = "Twin Tap",
+            Rarity = Rarity.Common,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.DoubleDrop,
+            Color = 0x5DADE2,
+            Value = 2.4,
+            RestockUnitCost = 0.95,
+            RestockGrowth = 1.0,
+            SoundPitch = 0.21
+        },
+        new()
+        {
+            Id = "surge_syrup",
+            Name = "Surge Syrup",
+            Rarity = Rarity.Rare,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.ChainCritAura,
+            Color = 0xF15BB5,
+            Value = 21.0,
+            RestockUnitCost = 9.5,
+            RestockGrowth = 1.02,
+            SoundPitch = -0.24
+        },
+        new()
+        {
+            Id = "loyalty_lemon",
+            Name = "Loyalty Lemon",
+            Rarity = Rarity.Uncommon,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.ChainTokenAura,
+            Color = 0xF4E04D,
+            Value = 6.5,
+            RestockUnitCost = 2.8,
+            RestockGrowth = 1.01,
+            SoundPitch = 0.06
+        },
+        new()
+        {
+            Id = "echo_elixir",
+            Name = "Echo Elixir",
+            Rarity = Rarity.Rare,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.ChainPreserveAura,
+            Color = 0x9B8AFB,
+            Value = 20.0,
+            RestockUnitCost = 9.0,
+            RestockGrowth = 1.02,
+            SoundPitch = -0.19
         }
     };
 

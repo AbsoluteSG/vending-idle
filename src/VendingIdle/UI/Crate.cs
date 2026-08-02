@@ -169,8 +169,8 @@ public sealed class Crate
             Theme.CrateLight, FontSize.Small, Align.Center);
 
         // Token gauge under the crate, on the floor.
-        var cost = (long)Math.Ceiling(state.NextPackCost);
-        var fraction = cost <= 0 ? 1f : MathHelper.Clamp(state.Tokens / (float)cost, 0f, 1f);
+        var cost = state.NextPackCost;
+        var fraction = cost <= 0 ? 1f : MathHelper.Clamp((float)(state.Tokens / cost), 0f, 1f);
 
         var gauge = new Rectangle(rect.X, rect.Bottom + 8, rect.Width, 6);
         ui.ProgressBar(gauge, fraction, affordable ? Theme.Money : Theme.Accent);

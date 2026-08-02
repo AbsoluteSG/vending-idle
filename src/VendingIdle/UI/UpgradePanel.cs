@@ -115,7 +115,7 @@ public static class UpgradePanel
         y += 17;
 
         ui.StatRow(new Rectangle(body.X, y, body.Width, 16), "Crate tokens",
-                   $"{Money.Format(state.Tokens)} / {Money.Format((long)Math.Ceiling(state.NextPackCost))}",
+                   $"{Money.Format(state.Tokens)} / {Money.Format(state.NextPackCost)}",
                    state.CanOpenPack ? Theme.Money : null);
         y += 22;
 

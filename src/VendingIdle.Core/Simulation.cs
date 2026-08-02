@@ -3,12 +3,16 @@ using System.Collections.Generic;
 
 namespace VendingIdle.Core;
 
-/// <summary>A Chain Fizz follow-up dispense that rode along with the primary one.</summary>
-public readonly struct ChainInfo
+/// <summary>One follow-up dispense in a cascade, in the order it fired.</summary>
+public readonly struct ChainHop
 {
     public int SlotIndex { get; init; }
     public string? DrinkId { get; init; }
     public double Payout { get; init; }
+    public bool Crit { get; init; }
+
+    /// <summary>Echo Elixir fired: the hop paid out but took nothing off the shelf.</summary>
+    public bool Preserved { get; init; }
 }
 
 /// <summary>What a single dispense produced, so the UI can react to it.</summary>
@@ -28,8 +32,15 @@ public readonly struct ClickResult
     /// <summary>Courier Cola fired into this slot (-1 when it did not).</summary>
     public int CourierSlotIndex { get; init; }
 
-    /// <summary>Set when Chain Fizz vended a second slot along with this one.</summary>
-    public ChainInfo? Chain { get; init; }
+    /// <summary>
+    /// The cascade this dispense set off, in firing order. Empty far more often
+    /// than not, so it is null rather than an empty list when nothing chained --
+    /// this allocates on a path that runs thousands of times a second.
+    /// </summary>
+    public IReadOnlyList<ChainHop>? Chain { get; init; }
+
+    /// <summary>Hops in the cascade, 0 when none fired.</summary>
+    public int ChainLength => Chain?.Count ?? 0;
 }
 
 /// <summary>
@@ -85,9 +96,13 @@ public static class Simulation
 
         var result = DispenseFrom(state, slot, rng, units: 1);
 
-        // A chain vended a slot further along, so the cursor has to clear that one
-        // too or the round-robin would serve it again immediately.
-        AdvanceCursor(state, result.Chain?.SlotIndex ?? slot.Index);
+        // A cascade vended slots further along, so the cursor has to clear the
+        // last of them or the round-robin would serve it again immediately.
+        var served = result.Chain is { Count: > 0 } hops
+            ? hops[^1].SlotIndex
+            : slot.Index;
+
+        AdvanceCursor(state, served);
         return result;
     }
 
@@ -184,6 +199,14 @@ public static class Simulation
         // still has one to give beyond what was asked for.
         var sold = Math.Min(units, slot.Stock);
         var bonus = crit && slot.Stock > sold ? 1 : 0;
+
+        // Twin Tap: a second bottle out of this same slot, where a chain would
+        // have gone looking for a different one.
+        if (drink.Effect == EffectKind.DoubleDrop && level > 0 &&
+            slot.Stock > sold + bonus &&
+            rng.NextDouble() < EffectStrength.DoubleDropChance(level))
+            bonus++;
+
         var cans = sold + bonus;
 
         // Bottomless Cup: the sale happens, the shelf keeps its bottles.
@@ -195,7 +218,7 @@ public static class Simulation
         state.Money += payout;
         state.TotalEarned += payout;
         state.TotalCansSold += cans;
-        state.Tokens += cans * Balance.TokensPerBottle + (crit ? Balance.CritTokenBonus : 0);
+        state.Tokens += cans * state.TokensPerBottle + (crit ? Balance.CritTokenBonus : 0);
 
         // Courier Cola: chance to drop one free bottle into a dry slot elsewhere.
         var courierIndex = -1;
@@ -210,33 +233,7 @@ public static class Simulation
             }
         }
 
-        // Chain Fizz: chance to vend one more slot alongside this one. The chained
-        // dispense is deliberately plain -- no crit, no proc rolls of its own --
-        // so two Chain Fizz slots can never recurse into each other.
-        ChainInfo? chain = null;
-        if (drink.Effect == EffectKind.ChainDispense && level > 0 &&
-            rng.NextDouble() < EffectStrength.ChainChance(level))
-        {
-            var next = NextStockedSlot(state, excludeIndex: slot.Index);
-            if (next is not null)
-            {
-                var nextDrink = next.Drink!;
-                next.Stock -= 1;
-
-                var chainPayout = nextDrink.Value * state.ClickValueMultiplier;
-                state.Money += chainPayout;
-                state.TotalEarned += chainPayout;
-                state.TotalCansSold += 1;
-                state.Tokens += Balance.TokensPerBottle;
-
-                chain = new ChainInfo
-                {
-                    SlotIndex = next.Index,
-                    DrinkId = nextDrink.Id,
-                    Payout = chainPayout
-                };
-            }
-        }
+        var chain = RunCascade(state, slot, drink, level, rng);
 
         return new ClickResult
         {
@@ -250,6 +247,101 @@ public static class Simulation
             CourierSlotIndex = courierIndex,
             Chain = chain
         };
+    }
+
+    /// <summary>
+    /// Runs the cascade a dispense may set off, and returns the hops in firing
+    /// order (null when none fired, which is the common case).
+    ///
+    /// Chains are the design pillar, so this is where the combo pieces meet: the
+    /// seed chance comes from the slot's own drink plus the machine-wide upgrade,
+    /// the hop ceiling comes from upgrades plus Relay Rum, and whether a hop can
+    /// crit, keep its stock or pay bonus tokens comes from whatever auras are on
+    /// the glass. None of them multiply raw value -- the payoff is length.
+    ///
+    /// Termination does not rest on the probabilities. Each hop must land on a
+    /// slot the cascade has not already visited, and the visited list is bounded
+    /// by the hop ceiling, so a cascade always ends even at 100% chance.
+    /// </summary>
+    private static List<ChainHop>? RunCascade(GameState state, Slot origin, DrinkDef drink,
+                                              int level, Random rng)
+    {
+        var chance = state.ChainChance;
+
+        if (level > 0)
+        {
+            // Chain Fizz seeds cascades; Jumper Juice only starts them, which is
+            // why it is a common and Chain Fizz is not.
+            if (drink.Effect == EffectKind.ChainDispense)
+                chance += EffectStrength.ChainChance(level);
+            else if (drink.Effect == EffectKind.SparkChain)
+                chance += EffectStrength.SparkChance(level);
+        }
+
+        if (chance <= 0.0) return null;
+
+        var maxHops = state.MaxChainHops;
+        if (maxHops <= 0) return null;
+
+        // Rolled before anything is allocated: the overwhelming majority of
+        // dispenses never chain, and this runs thousands of times a second
+        // during offline catch-up.
+        if (rng.NextDouble() >= Math.Min(chance, Balance.ChainChanceMax)) return null;
+
+        var auras = state.Auras;
+
+        List<ChainHop>? hops = null;
+        Span<int> visited = stackalloc int[maxHops + 1];
+        visited[0] = origin.Index;
+        var seen = 1;
+
+        var hopChance = Math.Min(chance, Balance.ChainChanceMax);
+
+        for (var hop = 0; hop < maxHops; hop++)
+        {
+            var next = NextStockedSlot(state, visited[..seen]);
+            if (next is null) break;
+
+            var nextDrink = next.Drink!;
+
+            // A hop is plain unless Surge Syrup is on the glass. That is the
+            // whole point of the drink: crits on hops are something you build.
+            var hopCrit = auras.ChainCritChance > 0.0 &&
+                          rng.NextDouble() < auras.ChainCritChance;
+
+            var preserved = auras.ChainPreserveChance > 0.0 &&
+                            rng.NextDouble() < auras.ChainPreserveChance;
+
+            if (!preserved) next.Stock -= 1;
+
+            var payout = nextDrink.Value * state.ClickValueMultiplier
+                         * (hopCrit ? Balance.CritMultiplier : 1.0);
+
+            state.Money += payout;
+            state.TotalEarned += payout;
+            state.TotalCansSold += 1;
+            state.Tokens += state.TokensPerBottle + auras.ChainTokenBonus
+                            + (hopCrit ? Balance.CritTokenBonus : 0);
+
+            hops ??= new List<ChainHop>(maxHops);
+            hops.Add(new ChainHop
+            {
+                SlotIndex = next.Index,
+                DrinkId = nextDrink.Id,
+                Payout = payout,
+                Crit = hopCrit,
+                Preserved = preserved
+            });
+
+            visited[seen++] = next.Index;
+
+            // Decays every hop, so a long tail costs exponentially more chance
+            // to reach rather than arriving all at once as the number climbs.
+            hopChance *= Balance.ChainDecay;
+            if (rng.NextDouble() >= hopChance) break;
+        }
+
+        return hops;
     }
 
     /// <summary>
@@ -292,6 +384,31 @@ public static class Simulation
             var slot = state.Slots[(start + i) % count];
             if (slot.Index == excludeIndex) continue;
             if (slot.CanDispense) return slot;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The cascade's version: skips every slot the chain has already been
+    /// through, which is what bounds a cascade independently of its rolls.
+    /// </summary>
+    private static Slot? NextStockedSlot(GameState state, ReadOnlySpan<int> exclude)
+    {
+        var count = state.Slots.Count;
+        if (count == 0) return null;
+
+        var start = ((state.DispenseCursor % count) + count) % count;
+        for (var i = 0; i < count; i++)
+        {
+            var slot = state.Slots[(start + i) % count];
+            if (!slot.CanDispense) continue;
+
+            var skip = false;
+            foreach (var index in exclude)
+                if (index == slot.Index) { skip = true; break; }
+
+            if (!skip) return slot;
         }
 
         return null;

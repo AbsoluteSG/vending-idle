@@ -35,8 +35,12 @@ public sealed class GameState
     public bool Muted { get; set; }
 
     // ---- Supply crates ---------------------------------------------------
-    /// <summary>Crate tokens, earned per bottle sold.</summary>
-    public long Tokens { get; set; }
+    /// <summary>
+    /// Crate tokens, earned per bottle sold. Fractional because the Loyalty
+    /// Scheme upgrade buys quarter-tokens; the gauge already rendered decimals
+    /// before it could produce them.
+    /// </summary>
+    public double Tokens { get; set; }
 
     public int PacksOpened { get; set; }
 
@@ -110,6 +114,22 @@ public sealed class GameState
     /// </summary>
     [JsonIgnore] public int ShakeBottlesPerSlot => Balance.ShakeBottlesPerSlot;
 
+    /// <summary>
+    /// Machine-wide chance for any dispense to start a cascade. Chain Fizz adds
+    /// its own on top of this per-slot; this is the floor the upgrade buys, so
+    /// chains are reachable without waiting on a crate roll.
+    /// </summary>
+    [JsonIgnore] public double ChainChance =>
+        Math.Min(Balance.ChainChanceMax,
+                 Modifiers.ChainChance(UpgradeLevels[(int)UpgradeId.ChainChance]));
+
+    /// <summary>Hop ceiling for one cascade, upgrades plus Relay Rum.</summary>
+    [JsonIgnore] public int MaxChainHops =>
+        Modifiers.ChainHops(UpgradeLevels[(int)UpgradeId.ChainHops]) + Auras.ChainHopBonus;
+
+    [JsonIgnore] public double TokensPerBottle =>
+        Modifiers.TokensPerBottle(UpgradeLevels[(int)UpgradeId.TokenRate]);
+
     [JsonIgnore] public int SlotsOwned => Slots.Count(s => s.Unlocked);
 
     [JsonIgnore] public int AutoRestockersOwned => Slots.Count(s => s.HasAutoRestocker);
@@ -130,7 +150,7 @@ public sealed class GameState
 
     /// <summary>Blocked while a rolled drink is still bobbing above the crate.</summary>
     [JsonIgnore] public bool CanOpenPack =>
-        PendingRevealId is null && Tokens >= (long)Math.Ceiling(NextPackCost);
+        PendingRevealId is null && Tokens >= NextPackCost;
 
     // ---------------------------------------------------------------------
     // Effect auras
@@ -144,11 +164,25 @@ public sealed class GameState
         /// <summary>Multiplier on restock prices (&lt; 1 is cheaper).</summary>
         public double RestockFactor { get; init; }
 
+        // ---- Chain combo pieces ----
+        /// <summary>Extra hops every cascade gets (Relay Rum).</summary>
+        public int ChainHopBonus { get; init; }
+        /// <summary>Chance an individual chain hop crits (Surge Syrup).</summary>
+        public double ChainCritChance { get; init; }
+        /// <summary>Bonus tokens per chain hop (Loyalty Lemon).</summary>
+        public long ChainTokenBonus { get; init; }
+        /// <summary>Chance a chain hop leaves its bottle on the shelf (Echo Elixir).</summary>
+        public double ChainPreserveChance { get; init; }
+
         public static AuraSnapshot None => new()
         {
             CritBonus = 0.0,
             CustomerIntervalFactor = 1.0,
-            RestockFactor = 1.0
+            RestockFactor = 1.0,
+            ChainHopBonus = 0,
+            ChainCritChance = 0.0,
+            ChainTokenBonus = 0,
+            ChainPreserveChance = 0.0
         };
     }
 
@@ -166,6 +200,10 @@ public sealed class GameState
             var critBonus = 0.0;
             var speedup = 0.0;
             var restockCut = 0.0;
+            var chainHops = 0;
+            var chainCrit = 0.0;
+            var chainTokens = 0L;
+            var chainPreserve = 0.0;
 
             // Small fixed roster, so "once per distinct drink" is a seen-set of ids.
             Span<bool> seen = stackalloc bool[DrinkDatabase.PackDrinks.Count];
@@ -194,6 +232,18 @@ public sealed class GameState
                     case EffectKind.RestockDiscountAura:
                         restockCut += EffectStrength.RestockCut(level);
                         break;
+                    case EffectKind.ChainExtendAura:
+                        chainHops += EffectStrength.ChainHops(level);
+                        break;
+                    case EffectKind.ChainCritAura:
+                        chainCrit += EffectStrength.ChainCritChance(level);
+                        break;
+                    case EffectKind.ChainTokenAura:
+                        chainTokens += EffectStrength.ChainTokens(level);
+                        break;
+                    case EffectKind.ChainPreserveAura:
+                        chainPreserve += EffectStrength.ChainPreserveChance(level);
+                        break;
                 }
             }
 
@@ -201,7 +251,11 @@ public sealed class GameState
             {
                 CritBonus = critBonus,
                 CustomerIntervalFactor = Math.Max(0.0, 1.0 - speedup),
-                RestockFactor = Math.Max(0.0, 1.0 - restockCut)
+                RestockFactor = Math.Max(0.0, 1.0 - restockCut),
+                ChainHopBonus = chainHops,
+                ChainCritChance = Math.Min(1.0, chainCrit),
+                ChainTokenBonus = chainTokens,
+                ChainPreserveChance = Math.Min(1.0, chainPreserve)
             };
         }
     }
@@ -250,6 +304,13 @@ public sealed class GameState
     /// </summary>
     public void Migrate()
     {
+        // Runs ahead of the version gate on purpose. The upgrade array's length
+        // is a schema fact, not a version fact: adding an upgrade widens it for
+        // every save on disk, including ones already at the current version,
+        // and a short array from yesterday's build would throw the moment
+        // anything read the new index.
+        NormalizeUpgradeLevels();
+
         if (Version >= CurrentVersion)
         {
             Version = CurrentVersion;
@@ -273,6 +334,22 @@ public sealed class GameState
         }
 
         Version = CurrentVersion;
+    }
+
+    /// <summary>
+    /// Grows (or replaces) the upgrade array so every <see cref="UpgradeId"/> has
+    /// a slot. Levels already stored keep their index, because the enum only ever
+    /// gains members at the end -- reordering it would silently rewrite people's
+    /// purchases into different upgrades.
+    /// </summary>
+    private void NormalizeUpgradeLevels()
+    {
+        if (UpgradeLevels.Length == UpgradeDatabase.Count) return;
+
+        var grown = new int[UpgradeDatabase.Count];
+        var carry = Math.Min(UpgradeLevels.Length, grown.Length);
+        Array.Copy(UpgradeLevels, grown, carry);
+        UpgradeLevels = grown;
     }
 
     /// <summary>Allocates rows up to and including <paramref name="row"/>.</summary>
@@ -454,7 +531,7 @@ public sealed class GameState
     {
         if (!CanOpenPack) return null;
 
-        Tokens -= (long)Math.Ceiling(NextPackCost);
+        Tokens -= NextPackCost;
         PacksOpened++;
         PendingRevealId = PackSystem.Roll(rng).Id;
         return PendingRevealId;
@@ -529,7 +606,7 @@ public sealed class GameState
                 DrinkCopies[key] = 0;
         }
 
-        Tokens = Math.Max(0, Tokens);
+        Tokens = Math.Max(0.0, Tokens);
         PacksOpened = Math.Max(0, PacksOpened);
 
         // A pending reveal must be a real pack drink or it is dropped -- a

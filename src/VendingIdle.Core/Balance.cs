@@ -44,6 +44,30 @@ public static class Balance
     /// </summary>
     public const int ShakeBottlesPerSlot = 1;
 
+    // ---- Chains ----------------------------------------------------------
+    /// <summary>
+    /// Hops a single cascade may take beyond the slot that started it, before
+    /// upgrades and Relay Rum add more. A cascade also stops when a roll fails or
+    /// it runs out of stocked slots it has not already visited, so this is the
+    /// ceiling rather than the usual length.
+    /// </summary>
+    public const int ChainHopsBase = 1;
+
+    /// <summary>
+    /// Each hop multiplies the chance of the next one. Chains are the design
+    /// pillar, so they have to be able to run -- but a flat re-roll makes the
+    /// expected length a hyperbola in the chance, which spikes without warning as
+    /// upgrades push it up. Decay keeps the tail finite and the curve legible.
+    /// </summary>
+    public const double ChainDecay = 0.55;
+
+    /// <summary>Machine-wide chain chance per level of the Live Wire upgrade.</summary>
+    public const double ChainChancePerLevel = 0.015;
+    public const double ChainChanceMax = 0.75;
+
+    /// <summary>Extra hops per level of the Longer Coils upgrade.</summary>
+    public const int ChainHopsPerLevel = 1;
+
     public const double CritMultiplier = 2.0;
     public const double CritChanceBase = 0.02;
     public const double CritChancePerLevel = 0.02;
@@ -80,9 +104,18 @@ public static class Balance
     /// <summary>Extra tokens when a dispense crits.</summary>
     public const long CritTokenBonus = 1;
 
-    /// <summary>Token price of the Nth crate (N = crates already opened).</summary>
-    public const double PackBaseCost = 300.0;
-    public const double PackCostGrowth = 1.12;
+    /// <summary>Extra tokens per bottle per level of the Loyalty Scheme upgrade.</summary>
+    public const double TokensPerBottlePerLevel = 0.25;
+
+    /// <summary>
+    /// Token price of the Nth crate (N = crates already opened). Tokens are
+    /// earned per bottle and a shake vends every stocked slot at once, so token
+    /// income scales with the machine; the price has to climb faster than the
+    /// cabinet grows or crates arrive in a flood. Tuned so a greedy first five
+    /// minutes opens none and a greedy half hour opens roughly one.
+    /// </summary>
+    public const double PackBaseCost = 3000.0;
+    public const double PackCostGrowth = 1.35;
 
     /// <summary>Duplicate copies past this stop raising the drink's effect level.</summary>
     public const int EffectLevelMax = 5;

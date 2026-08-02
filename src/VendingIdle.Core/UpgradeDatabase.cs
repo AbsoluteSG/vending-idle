@@ -12,7 +12,10 @@ public enum UpgradeId
     CustomerSpeed = 3,
     SlotCapacity = 4,
     RestockDiscount = 5,
-    AutoRestockSpeed = 6
+    AutoRestockSpeed = 6,
+    ChainChance = 7,
+    ChainHops = 8,
+    TokenRate = 9
 }
 
 public sealed class UpgradeDef
@@ -111,6 +114,40 @@ public static class UpgradeDatabase
             Growth = 1.6,
             MaxLevel = 25,
             EffectText = l => Secs(Modifiers.AutoRestockInterval(l)) + " per bottle"
+        },
+        new()
+        {
+            Id = UpgradeId.ChainChance,
+            Name = "Live Wire",
+            Description = "Any bottle can jolt the next coil into vending too.",
+            BaseCost = 600,
+            Growth = 1.52,
+            MaxLevel = 40,
+            EffectText = l => Pct(Modifiers.ChainChance(l)) + " to chain"
+        },
+        new()
+        {
+            Id = UpgradeId.ChainHops,
+            Name = "Longer Coils",
+            Description = "Chains carry further before they run out of travel.",
+            // The steepest curve in the game on purpose: a hop multiplies every
+            // chain effect at once, so each one has to cost more than the last
+            // by a wide margin or the cascade runs away.
+            BaseCost = 4_000,
+            Growth = 2.35,
+            MaxLevel = 6,
+            EffectText = l => Modifiers.ChainHops(l) + " hops per chain"
+        },
+        new()
+        {
+            Id = UpgradeId.TokenRate,
+            Name = "Loyalty Scheme",
+            Description = "Bottles earn more crate tokens.",
+            BaseCost = 1_200,
+            Growth = 1.55,
+            MaxLevel = 20,
+            EffectText = l => Modifiers.TokensPerBottle(l)
+                                  .ToString("0.##", CultureInfo.InvariantCulture) + " tk per bottle"
         }
     };
 
@@ -149,4 +186,15 @@ public static class Modifiers
     public static double AutoRestockInterval(int level) =>
         Math.Max(Balance.AutoRestockIntervalMin,
                  Balance.AutoRestockIntervalBase * Math.Pow(Balance.AutoRestockSpeedPerLevel, level));
+
+    /// <summary>Machine-wide chance for any dispense to chain into another slot.</summary>
+    public static double ChainChance(int level) =>
+        Math.Min(Balance.ChainChanceMax, Balance.ChainChancePerLevel * level);
+
+    /// <summary>Hop ceiling for a cascade, before Relay Rum adds to it.</summary>
+    public static int ChainHops(int level) =>
+        Balance.ChainHopsBase + Balance.ChainHopsPerLevel * level;
+
+    public static double TokensPerBottle(int level) =>
+        Balance.TokensPerBottle + Balance.TokensPerBottlePerLevel * level;
 }

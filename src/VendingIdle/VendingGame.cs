@@ -351,19 +351,34 @@ public sealed class VendingGame : Game, ISimEvents
                 new Vector2(courierCell.Center.X - 30, courierCell.Y - 2),
                 Theme.Positive, FontSize.Small);
 
-        if (result.Chain is { } chain)
+        if (result.Chain is { Count: > 0 } chain)
         {
-            var chainDrink = DrinkDatabase.Get(chain.DrinkId);
-            var chainColor = chainDrink is not null
-                ? Theme.FromPacked(chainDrink.Color) : Theme.TextDim;
+            for (var i = 0; i < chain.Count; i++)
+            {
+                var hop = chain[i];
 
-            if (_machine.TryGetDispensedBottle(chain.SlotIndex, 0, out var chainFrom))
-                _fx.SpawnBottle(chainFrom, _machine.TrayFloorY, chainColor);
+                var hopDrink = DrinkDatabase.Get(hop.DrinkId);
+                var hopColor = hopDrink is not null
+                    ? Theme.FromPacked(hopDrink.Color) : Theme.TextDim;
 
-            if (_machine.TryGetCellRect(chain.SlotIndex, out var chainCell))
-                _fx.SpawnPopup("+" + Money.Cash(chain.Payout),
-                    new Vector2(chainCell.Center.X - 16, chainCell.Y - 2),
-                    Theme.Crit, FontSize.Normal);
+                if (!hop.Preserved &&
+                    _machine.TryGetDispensedBottle(hop.SlotIndex, 0, out var hopFrom))
+                    _fx.SpawnBottle(hopFrom, _machine.TrayFloorY, hopColor);
+
+                if (!_machine.TryGetCellRect(hop.SlotIndex, out var hopCell)) continue;
+
+                _fx.SpawnPopup("+" + Money.Cash(hop.Payout),
+                    new Vector2(hopCell.Center.X - 16, hopCell.Y - 2),
+                    hop.Crit ? Theme.Crit : Theme.Positive, FontSize.Normal);
+
+                // The cascade is the thing worth building, so it gets counted on
+                // screen from the second hop -- the point where it stopped being
+                // the old single follow-up and became a combo.
+                if (i >= 1)
+                    _fx.SpawnPopup($"x{i + 1} CHAIN",
+                        new Vector2(hopCell.Center.X - 22, hopCell.Y - 22),
+                        Theme.Accent, FontSize.Small);
+            }
         }
 
         _fx.FlashTray();

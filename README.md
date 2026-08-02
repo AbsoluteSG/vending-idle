@@ -53,6 +53,42 @@ each carries an aura (active while loaded *and stocked*) or an on-dispense proc.
 Duplicates raise the effect's level. Purchase drinks stay pure value -- effects push
 on every lever except the value curve, deliberately.
 
+### Chains are the pillar
+
+A dispense can jolt the next stocked coil into vending too, and that one can jolt the
+next -- a **cascade**. Its length is the thing you build toward: chains are where the
+roster stops being a value ladder and starts being a set of pieces that combine.
+
+A cascade is bounded on two axes. It gets a **hop ceiling** (the Longer Coils upgrade,
+plus Relay Rum while it is stocked), and each hop **decays** the chance of the one
+after it. Decay matters more than it looks: with a flat re-roll the expected length is
+a hyperbola in the chance, so it stays flat and then spikes without warning as
+upgrades push the number up. Decaying keeps the tail finite and the curve legible.
+
+Termination does not rest on the probabilities at all. Every hop must land on a slot
+the cascade has not already visited, so a cascade ends even at 100% chance -- the
+guarantee is structural, not statistical.
+
+The combo pieces are deliberately weak read on their own card, because the payoff is
+meant to come from what they sit next to:
+
+| Drink | On its own | What it is for |
+|---|---|---|
+| Chain Fizz | a chance to chain | the seed |
+| Jumper Juice | starts chains, extends nothing | a cheap seed for a deck that cannot chain |
+| Relay Rum | nothing at all | +hops, so every other chain piece fires more often |
+| Surge Syrup | nothing at all | hops can crit, which they otherwise never do |
+| Echo Elixir | nothing at all | hops stop consuming stock, so cascades sustain |
+| Loyalty Lemon | nothing at all | hops pay crate tokens, turning cascades into crates |
+| Twin Tap | a second bottle | the anti-combo: it pays out *without* a chain |
+
+Relay Rum is the enabler the rest lean on, so its scaling is the slowest number in the
+game -- a hop multiplies every other chain effect at once, which is also why Longer
+Coils is the steepest cost curve here.
+
+None of them multiply raw value. The payoff of a combo is *length*, and length pays in
+bottles, tokens and crits -- never in a value multiplier stacked on the value curve.
+
 ## Running it
 
 Requires the **.NET 8 SDK**. MonoGame's content pipeline is a local dotnet tool, so

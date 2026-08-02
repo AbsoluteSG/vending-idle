@@ -187,9 +187,17 @@ public static class SlotInspector
 
             var nameColor = unlocked ? Theme.Text : Theme.TextFaint;
 
+            var tag = isCurrent ? "loaded"
+                    : isPack && unlocked
+                        ? (state.EffectLevelOf(def) >= Balance.EffectLevelMax
+                            ? "MAX" : $"Lv {state.EffectLevelOf(def)}")
+                        : null;
+
             // Swatch on the left, status tag on the right; everything written in
-            // between shares what is left over.
-            var textWidth = rowRect.Width - 78;
+            // between shares what is left over. Rows with no tag get that space
+            // back rather than truncating against a reservation nothing uses.
+            var tagWidth = tag is null ? 0f : ui.T.Measure(tag, FontSize.Small).X + 12f;
+            var textWidth = rowRect.Width - 28 - 10 - tagWidth;
 
             ui.T.DrawWithin(ui.Sb, def.Name, new Vector2(rowRect.X + 28, rowRect.Y + 4),
                             nameColor, textWidth, FontSize.Small);
@@ -224,12 +232,6 @@ public static class SlotInspector
                     new Vector2(rowRect.X + 28, rowRect.Y + 21), Theme.TextFaint, textWidth,
                     FontSize.Small);
             }
-
-            var tag = isCurrent ? "loaded"
-                    : isPack && unlocked
-                        ? (state.EffectLevelOf(def) >= Balance.EffectLevelMax
-                            ? "MAX" : $"Lv {state.EffectLevelOf(def)}")
-                        : null;
 
             if (tag is not null)
                 ui.T.DrawIn(ui.Sb, tag, rowRect,

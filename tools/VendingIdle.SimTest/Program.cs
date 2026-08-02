@@ -15,6 +15,7 @@ public static class Program
     private static int _passed;
     private static int _failed;
 
+
     public static int Main(string[] args)
     {
         if (args.Contains("--curve"))
@@ -52,7 +53,11 @@ public static class Program
         RarityWeightsHold();
         AurasRequireStock();
         AuraCapsHold();
-        ChainNeverRecurses();
+        ChainCascadesAreBounded();
+        ChainCombosStack();
+        ChainSustainAndTokens();
+        TwinTapAndSpark();
+        OldSaveGrowsTheUpgradeArray();
         BottomlessPreservesStock();
         CourierRefillsDrySlots();
         OfflineMatchesLiveWithEffects();
@@ -576,8 +581,11 @@ public static class Program
         Check("five minutes is not a fortune", state.TotalEarned < 10_000);
         Check($"five minutes does not fill the machine ({state.SlotsOwned} slots)",
               state.SlotsOwned <= 5);
-        Check("five minutes does not hand out the roster",
-              DrinkDatabase.UnlockedFor(state).Count() <= 2);
+        // Counts the *purchase* ladder only. Pack drinks are priced below their
+        // value tier and bought with tokens, so they are a separate pacing axis
+        // and folding them in here would make this guard fire on crate luck.
+        Check("five minutes does not hand out the roster", PurchaseDrinksUnlocked(state) <= 2);
+        Check("five minutes opens no crates", state.PacksOpened == 0);
     }
 
     /// <summary>
@@ -633,8 +641,13 @@ public static class Program
               state.TotalEarned < 1e5);
         Check($"30 minutes does not hand over the machine ({state.SlotsOwned} slots)",
               state.SlotsOwned <= 9);
-        Check("30 minutes is still on the starter drinks",
-              DrinkDatabase.UnlockedFor(state).Count() <= 2);
+        Check("30 minutes is still on the starter drinks", PurchaseDrinksUnlocked(state) <= 2);
+
+        // The crate track should have opened by now, but only just: a half hour
+        // of greedy play is meant to buy a taste of the pack roster, not the
+        // combo pieces that make cascades run.
+        Check($"30 minutes opens a crate or two ({state.PacksOpened})",
+              state.PacksOpened is >= 1 and <= 3);
         Check("30 minutes leaves something left to chase",
               DrinkDatabase.UnlockedFor(state).Count() < DrinkDatabase.All.Count);
 
@@ -697,6 +710,10 @@ public static class Program
             }
         }
     }
+
+    /// <summary>Unlocked drinks from the earnings ladder, ignoring anything crate-found.</summary>
+    private static int PurchaseDrinksUnlocked(GameState state) =>
+        DrinkDatabase.UnlockedFor(state).Count(d => d.Source == DrinkSource.Purchase);
 
     /// <summary>Spends spare money on whatever is affordable, cheapest thing first.</summary>
     private static void BuyGreedily(GameState state, Random rng)
@@ -783,13 +800,17 @@ public static class Program
 
         Check("bottles sold earn crate tokens", state.Tokens >= sold);
 
-        state.Tokens = 1_000;
-        var cost = (long)Math.Ceiling(state.NextPackCost);
+        // Derived from the price rather than a round number: the crate curve is
+        // tuned against the shake economy and moves when that is rebalanced.
+        var cost = state.NextPackCost;
+        var granted = cost * 2.0;
+        state.Tokens = granted;
+
         var rolled = state.TryOpenPack(rng);
 
         Check("opening a crate rolls a pack drink",
               rolled is not null && DrinkDatabase.Get(rolled)?.Source == DrinkSource.Pack);
-        Check("opening deducts the token price", state.Tokens == 1_000 - cost);
+        Check("opening deducts the token price", Math.Abs(state.Tokens - (granted - cost)) < 1e-9);
         Check("crate price rises after opening", state.NextPackCost > cost);
     }
 
@@ -916,38 +937,227 @@ public static class Program
               state.RestockDiscount >= Balance.RestockDiscountMin - 1e-12);
     }
 
-    private static void ChainNeverRecurses()
+    /// <summary>
+    /// Cascades are the design pillar, so the guarantee that matters is not
+    /// "never deeper than one" any more -- it is that a cascade is bounded by
+    /// its hop ceiling and can never touch the same slot twice, whatever the
+    /// probabilities do.
+    /// </summary>
+    private static void ChainCascadesAreBounded()
     {
         var state = GameState.NewGame();
         var rng = new Random(24);
         state.Money = 100_000_000.0;
 
-        // Two adjacent Chain Fizz slots at max level: the worst case for a
-        // chain proc that could trigger another chain proc.
-        LoadPackDrink(state, 0, "chain_fizz", Balance.EffectLevelMax);
-        LoadPackDrink(state, 1, "chain_fizz", Balance.EffectLevelMax);
+        // Nine slots of Chain Fizz at max level, and the chain chance pinned as
+        // high as it goes: the worst case for a runaway cascade.
+        for (var i = 0; i < 9; i++)
+            LoadPackDrink(state, i, "chain_fizz", Balance.EffectLevelMax);
 
-        var ok = true;
-        var sawChain = false;
+        state.UpgradeLevels[(int)UpgradeId.ChainChance] = 40;
+        state.UpgradeLevels[(int)UpgradeId.ChainHops] = 3;
 
-        for (var i = 0; i < 2_000; i++)
+        var ceiling = state.MaxChainHops;
+        var withinCeiling = true;
+        var noRepeats = true;
+        var longest = 0;
+
+        for (var i = 0; i < 4_000; i++)
         {
-            state.Slots[0].Stock = state.SlotCapacity;
-            state.Slots[1].Stock = state.SlotCapacity;
+            for (var slot = 0; slot < 9; slot++)
+                state.Slots[slot].Stock = state.SlotCapacity;
 
-            var before = state.TotalStock;
             var result = Simulation.Click(state, rng);
-            var consumed = before - state.TotalStock;
+            var chain = result.Chain;
+            if (chain is null) continue;
 
-            if (result.Chain is not null) sawChain = true;
+            longest = Math.Max(longest, chain.Count);
+            if (chain.Count > ceiling) withinCeiling = false;
 
-            // Primary can take at most 2 (crit), a chain exactly 1 more. Any
-            // deeper recursion would consume 4+.
-            if (consumed > 3) ok = false;
+            // The origin plus every hop must be nine distinct slots at most.
+            var seen = new HashSet<int> { result.SlotIndex };
+            foreach (var hop in chain)
+                if (!seen.Add(hop.SlotIndex)) noRepeats = false;
         }
 
-        Check("chain procs actually fire", sawChain);
-        Check("a chain never recurses past depth 1", ok);
+        Check("cascades actually run past a single hop", longest >= 2);
+        Check($"a cascade never exceeds its hop ceiling ({longest} <= {ceiling})", withinCeiling);
+        Check("a cascade never vends the same slot twice", noRepeats);
+    }
+
+    /// <summary>
+    /// The combo pieces only pay off on top of a cascade, so each is measured
+    /// against the same cascade running without it.
+    /// </summary>
+    private static void ChainCombosStack()
+    {
+        // Relay Rum buys hops, which is the whole enabler.
+        var plain = GameState.NewGame();
+        plain.Money = 100_000_000.0;
+        LoadPackDrink(plain, 0, "chain_fizz", Balance.EffectLevelMax);
+        var baseHops = plain.MaxChainHops;
+
+        var extended = GameState.NewGame();
+        extended.Money = 100_000_000.0;
+        LoadPackDrink(extended, 0, "chain_fizz", Balance.EffectLevelMax);
+        LoadPackDrink(extended, 1, "relay_rum", Balance.EffectLevelMax);
+
+        Check("Relay Rum lengthens cascades", extended.MaxChainHops > baseHops);
+
+        // ...and stops the moment its slot runs dry, like every other aura.
+        extended.Slots[1].Stock = 0;
+        Check("a dry Relay Rum lends no hops", extended.MaxChainHops == baseHops);
+
+        // Surge Syrup is the only way a hop can crit.
+        var crit = GameState.NewGame();
+        var rng = new Random(77);
+        crit.Money = 100_000_000.0;
+        for (var i = 0; i < 6; i++)
+            LoadPackDrink(crit, i, "chain_fizz", Balance.EffectLevelMax);
+        crit.UpgradeLevels[(int)UpgradeId.ChainChance] = 40;
+        crit.UpgradeLevels[(int)UpgradeId.ChainHops] = 3;
+
+        var hopsSeen = 0;
+        var hopCrits = 0;
+
+        for (var i = 0; i < 3_000; i++)
+        {
+            for (var slot = 0; slot < 6; slot++) crit.Slots[slot].Stock = crit.SlotCapacity;
+
+            if (Simulation.Click(crit, rng).Chain is not { } chain) continue;
+            foreach (var hop in chain)
+            {
+                hopsSeen++;
+                if (hop.Crit) hopCrits++;
+            }
+        }
+
+        Check("hops never crit without Surge Syrup", hopsSeen > 0 && hopCrits == 0);
+
+        LoadPackDrink(crit, 6, "surge_syrup", Balance.EffectLevelMax);
+        var withSyrup = 0;
+
+        for (var i = 0; i < 3_000; i++)
+        {
+            for (var slot = 0; slot < 7; slot++) crit.Slots[slot].Stock = crit.SlotCapacity;
+
+            if (Simulation.Click(crit, rng).Chain is not { } chain) continue;
+            foreach (var hop in chain) if (hop.Crit) withSyrup++;
+        }
+
+        Check("Surge Syrup lets hops crit", withSyrup > 0);
+    }
+
+    /// <summary>Echo Elixir and Loyalty Lemon pay out on hops rather than on the primary.</summary>
+    private static void ChainSustainAndTokens()
+    {
+        var state = GameState.NewGame();
+        var rng = new Random(78);
+        state.Money = 100_000_000.0;
+
+        for (var i = 0; i < 5; i++)
+            LoadPackDrink(state, i, "chain_fizz", Balance.EffectLevelMax);
+
+        LoadPackDrink(state, 5, "echo_elixir", Balance.EffectLevelMax);
+        LoadPackDrink(state, 6, "loyalty_lemon", Balance.EffectLevelMax);
+
+        state.UpgradeLevels[(int)UpgradeId.ChainChance] = 40;
+        state.UpgradeLevels[(int)UpgradeId.ChainHops] = 3;
+
+        var preserved = 0;
+        var hops = 0;
+
+        // Checked every iteration, so it is collapsed to one assertion rather
+        // than three thousand lines of report.
+        var everyHopPaidBonus = true;
+
+        for (var i = 0; i < 3_000; i++)
+        {
+            for (var slot = 0; slot < 7; slot++) state.Slots[slot].Stock = state.SlotCapacity;
+
+            var tokensBefore = state.Tokens;
+            if (Simulation.Click(state, rng).Chain is not { } chain) continue;
+
+            hops += chain.Count;
+            foreach (var hop in chain) if (hop.Preserved) preserved++;
+
+            // Every hop must be worth strictly more than the plain rate, since
+            // Loyalty Lemon is on the glass.
+            if (chain.Count > 0 &&
+                state.Tokens - tokensBefore <= chain.Count * state.TokensPerBottle)
+                everyHopPaidBonus = false;
+        }
+
+        Check("Echo Elixir keeps stock on some hops", hops > 0 && preserved > 0);
+        Check("Loyalty Lemon pays bonus tokens on every hop", hops > 0 && everyHopPaidBonus);
+    }
+
+    private static void TwinTapAndSpark()
+    {
+        // Twin Tap takes a second bottle from its own slot rather than chaining.
+        var twin = GameState.NewGame();
+        var rng = new Random(79);
+        twin.Money = 100_000_000.0;
+        LoadPackDrink(twin, 0, "twin_tap", Balance.EffectLevelMax);
+
+        var doubles = 0;
+        var neverChained = true;
+
+        for (var i = 0; i < 1_500; i++)
+        {
+            twin.Slots[0].Stock = twin.SlotCapacity;
+            var before = twin.Slots[0].Stock;
+            var result = Simulation.Click(twin, rng);
+
+            // Only one slot exists, so nothing can chain: every extra bottle is
+            // Twin Tap or a crit, and both come out of this same slot.
+            if (before - twin.Slots[0].Stock >= 2) doubles++;
+            if (result.Chain is not null) neverChained = false;
+        }
+
+        Check("Twin Tap pulls a second bottle from its own slot", doubles > 0);
+        Check("Twin Tap does not chain -- the bottle is its own slot's", neverChained);
+
+        // Jumper Juice starts cascades from a drink with no chain of its own.
+        var spark = GameState.NewGame();
+        spark.Money = 100_000_000.0;
+        LoadPackDrink(spark, 0, "jumper_juice", Balance.EffectLevelMax);
+
+        // A plain drink to chain *into*: the point is that the spark comes from
+        // Jumper Juice, not from anything the target does.
+        spark.Slots[1].Unlocked = true;
+        spark.TryAssignDrink(1, "fizzy_water");
+        spark.RestockToFull(spark.Slots[1]);
+
+        var sparked = false;
+        for (var i = 0; i < 2_000; i++)
+        {
+            spark.Slots[0].Stock = spark.SlotCapacity;
+            spark.Slots[1].Stock = spark.SlotCapacity;
+
+            if (Simulation.Click(spark, rng).Chain is { Count: > 0 }) sparked = true;
+        }
+
+        Check("Jumper Juice starts chains of its own", sparked);
+    }
+
+    /// <summary>
+    /// Adding an upgrade widens the saved array. A save written by yesterday's
+    /// build must not throw the moment anything reads the new index.
+    /// </summary>
+    private static void OldSaveGrowsTheUpgradeArray()
+    {
+        var state = GameState.NewGame();
+        state.UpgradeLevels = new int[3];
+        state.UpgradeLevels[(int)UpgradeId.ClickValue] = 5;
+
+        state.Migrate();
+
+        Check("a short upgrade array is grown to fit",
+              state.UpgradeLevels.Length == UpgradeDatabase.Count);
+        Check("existing upgrade levels survive the widening",
+              state.UpgradeLevels[(int)UpgradeId.ClickValue] == 5);
+        Check("reading a brand-new upgrade is safe", state.MaxChainHops >= Balance.ChainHopsBase);
     }
 
     private static void BottomlessPreservesStock()
