@@ -50,7 +50,7 @@ public sealed partial class Ui
         if (enabled && hover) P.OutlineRounded(Sb, rect, 6, Theme.PanelEdge);
 
         var fg = enabled ? Theme.Text : Theme.TextFaint;
-        T.DrawIn(Sb, T.Fit(label, rect.Width - 12, size), rect, fg, size, Align.Center);
+        T.DrawIn(Sb, label, rect, fg, size, Align.Center, padX: 6);
 
         if (hover && tooltip is not null) SetTooltip(tooltip, rect);
 
@@ -169,12 +169,30 @@ public sealed partial class Ui
                       Math.Min(4, rect.Height / 2), fill);
     }
 
-    /// <summary>Label on the left, value on the right -- the workhorse stat row.</summary>
+    /// <summary>
+    /// Label on the left, value on the right -- the workhorse stat row. The two
+    /// share one rect, so they have to share its width as well: fitting each
+    /// against the full row independently is what lets a long label run under
+    /// its own value and produce the overlap that reads as a rendering bug.
+    ///
+    /// The value has the stronger claim -- it is the number the player came to
+    /// read -- so it is measured first and the label shrinks into the remainder.
+    /// </summary>
     public void StatRow(Rectangle rect, string label, string value,
                         Color? valueColor = null, FontSize size = FontSize.Small)
     {
-        T.DrawIn(Sb, label, rect, Theme.TextDim, size, Align.Left);
-        T.DrawIn(Sb, value, rect, valueColor ?? Theme.Text, size, Align.Right);
+        const int Gap = 8;
+
+        // Even the value is capped, so a runaway number cannot squeeze the label
+        // out of existence entirely.
+        var valueBudget = rect.Width * 0.65f;
+        var valueSize = T.FitSize(value, valueBudget, size);
+        var valueWidth = T.Measure(T.Fit(value, valueBudget, valueSize), valueSize).X;
+
+        T.DrawIn(Sb, value, rect, valueColor ?? Theme.Text, size, Align.Right,
+                 maxWidth: valueBudget);
+        T.DrawIn(Sb, label, rect, Theme.TextDim, size, Align.Left,
+                 maxWidth: rect.Width - valueWidth - Gap);
     }
 
     public void Separator(int x, int y, int width) =>

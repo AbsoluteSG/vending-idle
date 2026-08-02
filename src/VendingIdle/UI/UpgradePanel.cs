@@ -42,15 +42,15 @@ public static class UpgradePanel
 
             ui.P.FillRounded(ui.Sb, rect, 6, bg);
 
-            ui.T.Draw(ui.Sb, ui.T.Fit(def.Name, rect.Width - 54, FontSize.Small),
-                      new Vector2(rect.X + 9, rect.Y + 5), Theme.Text, FontSize.Small);
+            ui.T.DrawWithin(ui.Sb, def.Name, new Vector2(rect.X + 9, rect.Y + 5),
+                            Theme.Text, rect.Width - 54, FontSize.Small);
 
             ui.T.DrawIn(ui.Sb, maxed ? "MAX" : $"Lv {level}",
                 new Rectangle(rect.X, rect.Y + 5, rect.Width - 9, 16),
                 maxed ? Theme.Accent : Theme.TextDim, FontSize.Small, Align.Right);
 
-            ui.T.Draw(ui.Sb, ui.T.Fit(def.EffectText(level), rect.Width - 18, FontSize.Small),
-                      new Vector2(rect.X + 9, rect.Y + 23), Theme.TextDim, FontSize.Small);
+            ui.T.DrawWithin(ui.Sb, def.EffectText(level), new Vector2(rect.X + 9, rect.Y + 23),
+                            Theme.TextDim, rect.Width - 18, FontSize.Small);
 
             if (maxed)
             {
@@ -69,9 +69,9 @@ public static class UpgradePanel
                 var costWidth = ui.T.Measure(costText, FontSize.Small).X;
                 var room = rect.Width - 18 - costWidth - 10;
 
-                ui.T.DrawIn(ui.Sb, ui.T.Fit("→ " + def.EffectText(level + 1), room, FontSize.Small),
+                ui.T.DrawIn(ui.Sb, "→ " + def.EffectText(level + 1),
                     new Rectangle(rect.X, rect.Y + 41, rect.Width - 9, 16),
-                    Theme.TextFaint, FontSize.Small, Align.Right);
+                    Theme.TextFaint, FontSize.Small, Align.Right, maxWidth: room);
             }
 
             if (ui.Hovering(rect) && !ui.ClickConsumed)

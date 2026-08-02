@@ -13,6 +13,13 @@
 
 #---------------------------------- Content ---------------------------------#
 
+#begin Fonts/UiFontTiny.spritefont
+/importer:FontDescriptionImporter
+/processor:FontDescriptionProcessor
+/processorParam:PremultiplyAlpha=True
+/processorParam:TextureFormat=Color
+/build:Fonts/UiFontTiny.spritefont
+
 #begin Fonts/UiFontSmall.spritefont
 /importer:FontDescriptionImporter
 /processor:FontDescriptionProcessor
@@ -27,12 +34,26 @@
 /processorParam:TextureFormat=Color
 /build:Fonts/UiFont.spritefont
 
+#begin Fonts/UiFontMedium.spritefont
+/importer:FontDescriptionImporter
+/processor:FontDescriptionProcessor
+/processorParam:PremultiplyAlpha=True
+/processorParam:TextureFormat=Color
+/build:Fonts/UiFontMedium.spritefont
+
 #begin Fonts/UiFontLarge.spritefont
 /importer:FontDescriptionImporter
 /processor:FontDescriptionProcessor
 /processorParam:PremultiplyAlpha=True
 /processorParam:TextureFormat=Color
 /build:Fonts/UiFontLarge.spritefont
+
+#begin Fonts/UiFontHuge.spritefont
+/importer:FontDescriptionImporter
+/processor:FontDescriptionProcessor
+/processorParam:PremultiplyAlpha=True
+/processorParam:TextureFormat=Color
+/build:Fonts/UiFontHuge.spritefont
 
 #begin Audio/shake.ogg
 /importer:OggImporter

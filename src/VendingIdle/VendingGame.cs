@@ -116,9 +116,12 @@ public sealed class VendingGame : Game, ISimEvents
         _sb = new SpriteBatch(GraphicsDevice);
         _prims = new Primitives(GraphicsDevice);
         _text = new TextRenderer(
+            Content.Load<SpriteFont>("Fonts/UiFontTiny"),
             Content.Load<SpriteFont>("Fonts/UiFontSmall"),
             Content.Load<SpriteFont>("Fonts/UiFont"),
-            Content.Load<SpriteFont>("Fonts/UiFontLarge"));
+            Content.Load<SpriteFont>("Fonts/UiFontMedium"),
+            Content.Load<SpriteFont>("Fonts/UiFontLarge"),
+            Content.Load<SpriteFont>("Fonts/UiFontHuge"));
         _ui = new Ui(GraphicsDevice, _prims, _text);
 
         _sfx.Load(Content);

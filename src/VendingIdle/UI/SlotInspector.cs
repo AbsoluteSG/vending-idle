@@ -186,38 +186,43 @@ public static class SlotInspector
                 unlocked ? Theme.FromPacked(def.Color) : Theme.TextFaint);
 
             var nameColor = unlocked ? Theme.Text : Theme.TextFaint;
-            ui.T.Draw(ui.Sb, def.Name, new Vector2(rowRect.X + 28, rowRect.Y + 4),
-                      nameColor, FontSize.Small);
+
+            // Swatch on the left, status tag on the right; everything written in
+            // between shares what is left over.
+            var textWidth = rowRect.Width - 78;
+
+            ui.T.DrawWithin(ui.Sb, def.Name, new Vector2(rowRect.X + 28, rowRect.Y + 4),
+                            nameColor, textWidth, FontSize.Small);
 
             if (isPack && def.Effect is { } effect)
             {
                 if (unlocked)
                 {
                     var level = state.EffectLevelOf(def);
-                    ui.T.Draw(ui.Sb,
-                        ui.T.Fit(EffectDatabase.Get(effect).Describe(level),
-                                 rowRect.Width - 78, FontSize.Small),
+                    ui.T.DrawWithin(ui.Sb, EffectDatabase.Get(effect).Describe(level),
                         new Vector2(rowRect.X + 28, rowRect.Y + 21),
-                        Theme.Accent, FontSize.Small);
+                        Theme.Accent, textWidth, FontSize.Small);
                 }
                 else
                 {
-                    ui.T.Draw(ui.Sb, "found in supply crates",
+                    ui.T.DrawWithin(ui.Sb, "found in supply crates",
                         new Vector2(rowRect.X + 28, rowRect.Y + 21),
-                        Theme.TextFaint, FontSize.Small);
+                        Theme.TextFaint, textWidth, FontSize.Small);
                 }
             }
             else if (unlocked)
             {
-                ui.T.Draw(ui.Sb,
+                ui.T.DrawWithin(ui.Sb,
                     $"{Money.Cash(def.Value)} each  •  {Money.Cash(def.RestockUnitCost)} restock",
-                    new Vector2(rowRect.X + 28, rowRect.Y + 21), Theme.TextDim, FontSize.Small);
+                    new Vector2(rowRect.X + 28, rowRect.Y + 21), Theme.TextDim, textWidth,
+                    FontSize.Small);
             }
             else
             {
-                ui.T.Draw(ui.Sb,
+                ui.T.DrawWithin(ui.Sb,
                     $"earn {Money.Cash(def.UnlockAtEarned)} total to unlock",
-                    new Vector2(rowRect.X + 28, rowRect.Y + 21), Theme.TextFaint, FontSize.Small);
+                    new Vector2(rowRect.X + 28, rowRect.Y + 21), Theme.TextFaint, textWidth,
+                    FontSize.Small);
             }
 
             var tag = isCurrent ? "loaded"
