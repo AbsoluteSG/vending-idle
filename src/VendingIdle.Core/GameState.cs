@@ -239,6 +239,93 @@ public sealed class GameState
         PendingRevealId is null && Tokens >= NextPackCost;
 
     // ---------------------------------------------------------------------
+    // Layout
+    // ---------------------------------------------------------------------
+
+    /// <summary>Highest row holding an unlocked slot, or 0 when none do.</summary>
+    [JsonIgnore] public int TopUnlockedRow
+    {
+        get
+        {
+            var top = 0;
+            foreach (var slot in Slots)
+                if (slot.Unlocked && slot.Row > top) top = slot.Row;
+            return top;
+        }
+    }
+
+    /// <summary>Distinct pack drinks currently loaded anywhere in the machine.</summary>
+    [JsonIgnore] public int DistinctPackDrinksLoaded
+    {
+        get
+        {
+            Span<bool> seen = stackalloc bool[DrinkDatabase.PackDrinks.Count];
+            var count = 0;
+
+            foreach (var slot in Slots)
+            {
+                if (!slot.Unlocked || slot.Drink is not { Source: DrinkSource.Pack } drink) continue;
+
+                var index = IndexInPackRoster(drink.Id);
+                if (index < 0 || seen[index]) continue;
+
+                seen[index] = true;
+                count++;
+            }
+
+            return count;
+        }
+    }
+
+    /// <summary>
+    /// The four orthogonally adjacent slots. Diagonals deliberately do not count:
+    /// the cabinet reads as a grid of shelves, and "next to" on a shelf means
+    /// beside or directly above, not at a corner.
+    /// </summary>
+    public IEnumerable<Slot> NeighboursOf(Slot slot)
+    {
+        if (slot.Column > 0 && SlotAt(slot.Index - 1) is { } left) yield return left;
+        if (slot.Column < Balance.Columns - 1 && SlotAt(slot.Index + 1) is { } right) yield return right;
+        if (SlotAt(slot.Index - Balance.Columns) is { } below) yield return below;
+        if (SlotAt(slot.Index + Balance.Columns) is { } above) yield return above;
+    }
+
+    /// <summary>
+    /// True when <paramref name="other"/> counts as the same drink as
+    /// <paramref name="drink"/> for a neighbour check. Mimic Mist answers yes to
+    /// everything, which is the entire drink.
+    /// </summary>
+    public static bool CountsAsSameDrink(DrinkDef drink, DrinkDef? other)
+    {
+        if (other is null) return false;
+        if (other.Id == drink.Id) return true;
+
+        // One-way on purpose: a Mimic satisfies its neighbour's check, but two
+        // Mimics beside each other do not resolve into anything, which is what a
+        // copy-of-a-copy rule would need a depth guard for.
+        return other.Effect == EffectKind.Mimic;
+    }
+
+    /// <summary>Crit bonus lent to this slot by a foreman sharing its row.</summary>
+    public double RowForemanBonus(Slot slot)
+    {
+        var bonus = 0.0;
+
+        foreach (var other in Slots)
+        {
+            if (other.Row != slot.Row || other.Index == slot.Index) continue;
+            if (!other.Unlocked || other.Drink is not { } drink) continue;
+            if (drink.Effect != EffectKind.RowForeman) continue;
+
+            // Layout, not upkeep: the foreman has to be *placed* in the row, but
+            // it does not have to be kept stocked to run it.
+            bonus += EffectStrength.RowCritBonus(EffectLevelOf(drink));
+        }
+
+        return bonus;
+    }
+
+    // ---------------------------------------------------------------------
     // Per-drink effects
     // ---------------------------------------------------------------------
 
@@ -263,6 +350,14 @@ public sealed class GameState
             EffectKind.ChainPreserve => EffectStrength.ChainPreserveChance(level),
             EffectKind.ChainToken => EffectStrength.ChainTokens(level),
             EffectKind.ChainExtend => EffectStrength.ChainHops(level),
+            EffectKind.Boomerang => EffectStrength.BoomerangChance(level),
+            EffectKind.TopRow => EffectStrength.TopRowValue(level),
+            EffectKind.TwinBonus => EffectStrength.TwinValue(level),
+            EffectKind.LonerBonus => EffectStrength.LonerValue(level),
+            EffectKind.ChargeUp => EffectStrength.ChargeRate(level),
+            EffectKind.Ageing => EffectStrength.AgeingRate(level),
+            EffectKind.Curator => EffectStrength.CuratorTokens(level),
+            EffectKind.DominoRouting => 1.0,
             _ => 0.0
         };
     }

@@ -133,6 +133,33 @@ public static class Balance
     public const double SlotCostGrowthPerLevel = 0.02;
     public const double SlotCostGrowthMin = 1.45;
 
+    // ---- Positional and stateful drink effects ---------------------------
+    // These bend the "no effect multiplies raw value" rule, knowingly. The rule
+    // exists because two balance passes died to *unbounded* multipliers stacking;
+    // every one of these is capped by something physical -- how tall the cabinet
+    // is, or a hard ceiling on banked time -- so none of them can run away.
+
+    /// <summary>Value added per row of fall, and the ceiling it stops at.</summary>
+    public const double FallValuePerRow = 0.22;
+    public const double FallValueMax = 2.0;
+
+    /// <summary>Extra value for sitting in the highest unlocked row.</summary>
+    public const double TopRowBonus = 0.6;
+
+    /// <summary>
+    /// Static Cell banks this fraction of the drink's own value per idle second.
+    /// It was a flat cash figure and that was a mistake: flat meant a Rare worth
+    /// 8 paid out 50 a bottle once its slot had sat a while, which inflated a
+    /// greedy half hour by 40x. Scaling by the drink keeps it in proportion to
+    /// whatever it is attached to, and the time cap keeps it bounded.
+    /// </summary>
+    public const double ChargePerSecond = 0.02;
+    public const double ChargeMaxSeconds = 120.0;
+
+    /// <summary>Vintage Vial's value multiplier grows this fast per idle second.</summary>
+    public const double AgeingPerSecond = 0.01;
+    public const double AgeingMaxSeconds = 180.0;
+
     /// <summary>Spare change per level of Loose Change. Small, as asked.</summary>
     public const double SpareChangePerLevel = 0.04;
 

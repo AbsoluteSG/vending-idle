@@ -210,7 +210,10 @@ public static class Simulation
 
         // Static Shock lifts the crit chance of its own sales rather than the
         // whole cabinet's, so the drink has to be in the slot being shaken.
-        var crit = RollCrit(state, rng, state.EffectStrengthOf(drink, EffectKind.CritBoost));
+        // The drink's own boost, plus anything a foreman in its row is lending it.
+        var crit = RollCrit(state, rng,
+                            state.EffectStrengthOf(drink, EffectKind.CritBoost)
+                            + state.RowForemanBonus(slot));
         var critMult = crit ? Balance.CritMultiplier : 1.0;
 
         // A crit always pays double; it takes an extra can with it when the coil
@@ -232,11 +235,22 @@ public static class Simulation
                         rng.NextDouble() < EffectStrength.PreserveChance(level);
         if (!preserved) slot.Stock -= cans;
 
-        var payout = drink.Value * state.ClickValueMultiplier * sold * critMult;
+        var payout = drink.Value * state.ClickValueMultiplier * sold * critMult
+                     * PositionMultiplier(state, slot, drink, level)
+                     + ChargeBonus(state, slot, drink, level) * sold;
+
+        // Everything that reads "how long since this slot last gave anything up"
+        // has now been paid, so the clock restarts.
+        slot.IdleSeconds = 0.0;
         state.Money += payout;
         state.TotalEarned += payout;
         state.TotalCansSold += cans;
-        state.EarnTokens(cans * state.TokensPerBottle + (crit ? Balance.CritTokenBonus : 0));
+        var curator = state.EffectStrengthOf(drink, EffectKind.Curator);
+        var curatorTokens = curator > 0.0 ? curator * state.DistinctPackDrinksLoaded : 0.0;
+
+        state.EarnTokens(cans * state.TokensPerBottle
+                         + (crit ? Balance.CritTokenBonus : 0)
+                         + curatorTokens);
 
         // Courier Cola: chance to drop one free bottle into a dry slot elsewhere.
         var courierIndex = -1;
@@ -279,6 +293,58 @@ public static class Simulation
             CourierSlotIndex = courierIndex,
             Chain = chain
         };
+    }
+
+    /// <summary>
+    /// How much the slot's position and history are worth on top of the drink's
+    /// face value. Every term here is bounded -- by how tall the cabinet is, or by
+    /// a hard ceiling on banked time -- so none of them can compound away the
+    /// way an open-ended multiplier would.
+    /// </summary>
+    private static double PositionMultiplier(GameState state, Slot slot, DrinkDef drink, int level)
+    {
+        if (level <= 0 || drink.Effect is not { } effect) return 1.0;
+
+        switch (effect)
+        {
+            case EffectKind.FallValue:
+                // Row 0 is the tray shelf and falls nowhere; the multiplier grows
+                // with the drop and stops at the Balance ceiling.
+                return 1.0 + EffectStrength.FallValue(level, slot.Row);
+
+            case EffectKind.TopRow:
+                return slot.Row >= state.TopUnlockedRow
+                    ? 1.0 + EffectStrength.TopRowValue(level)
+                    : 1.0;
+
+            case EffectKind.TwinBonus:
+                foreach (var neighbour in state.NeighboursOf(slot))
+                    if (GameState.CountsAsSameDrink(drink, neighbour.Drink))
+                        return 1.0 + EffectStrength.TwinValue(level);
+                return 1.0;
+
+            case EffectKind.LonerBonus:
+                foreach (var neighbour in state.NeighboursOf(slot))
+                    if (neighbour.Unlocked && neighbour.DrinkId is not null)
+                        return 1.0;
+                return 1.0 + EffectStrength.LonerValue(level);
+
+            case EffectKind.Ageing:
+                var aged = Math.Min(slot.IdleSeconds, Balance.AgeingMaxSeconds);
+                return 1.0 + EffectStrength.AgeingRate(level) * aged;
+
+            default:
+                return 1.0;
+        }
+    }
+
+    /// <summary>Static Cell's banked payout, released by this sale.</summary>
+    private static double ChargeBonus(GameState state, Slot slot, DrinkDef drink, int level)
+    {
+        if (level <= 0 || drink.Effect != EffectKind.ChargeUp) return 0.0;
+
+        var banked = Math.Min(slot.IdleSeconds, Balance.ChargeMaxSeconds);
+        return drink.Value * EffectStrength.ChargeRate(level) * banked * state.ClickValueMultiplier;
     }
 
     /// <summary>
@@ -333,6 +399,12 @@ public static class Simulation
         var decay = state.ChainDecay;
         var forkChance = state.ChainForkChance;
 
+        // Domino Drop routes its cascades through neighbouring slots instead of
+        // the round-robin cursor. That is the difference between a chain you can
+        // follow across the glass and one that lands on three unrelated cells.
+        var domino = drink.Effect == EffectKind.DominoRouting && level > 0;
+        var boomerang = state.EffectStrengthOf(drink, EffectKind.Boomerang);
+
         List<ChainHop>? hops = null;
         Span<int> visited = stackalloc int[maxHops * 2 + 2];
         visited[0] = origin.Index;
@@ -342,7 +414,11 @@ public static class Simulation
 
         for (var hop = 0; hop < maxHops; hop++)
         {
-            var next = NextStockedSlot(state, visited[..seen]);
+            var from = seen > 0 ? state.SlotAt(visited[seen - 1]) : origin;
+            var next = domino
+                ? NextAdjacentStockedSlot(state, from, visited[..seen])
+                : NextStockedSlot(state, visited[..seen]);
+
             if (next is null) break;
 
             hops ??= new List<ChainHop>(maxHops + 2);
@@ -369,7 +445,41 @@ public static class Simulation
             if (rng.NextDouble() >= hopChance) break;
         }
 
+        // Boomerang Brew: one last hop back to where it all started. Deliberately
+        // outside the loop and outside the visited rule -- the origin is the one
+        // slot a cascade is otherwise guaranteed never to revisit, which is what
+        // makes coming back to it feel like a loop closing.
+        if (hops is { Count: > 0 } && boomerang > 0.0 &&
+            rng.NextDouble() < boomerang && origin.CanDispense)
+        {
+            VendHop(state, origin, rng, hopCritChance, hopPreserveChance, hopTokenBonus, hops);
+        }
+
         return hops;
+    }
+
+    /// <summary>
+    /// The nearest stocked slot orthogonally adjacent to <paramref name="from"/>,
+    /// skipping anything the cascade already took. Falls back to nothing rather
+    /// than to the cursor: a Domino chain that jumps across the cabinet when it
+    /// runs out of neighbours would undo the one thing the drink is for.
+    /// </summary>
+    private static Slot? NextAdjacentStockedSlot(GameState state, Slot? from, ReadOnlySpan<int> exclude)
+    {
+        if (from is null) return null;
+
+        foreach (var neighbour in state.NeighboursOf(from))
+        {
+            if (!neighbour.CanDispense) continue;
+
+            var skip = false;
+            foreach (var index in exclude)
+                if (index == neighbour.Index) { skip = true; break; }
+
+            if (!skip) return neighbour;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -495,6 +605,7 @@ public static class Simulation
         if (dt <= 0.0) return;
 
         TickRush(state, dt);
+        TickIdle(state, dt);
         TickAutoRestock(state, dt, events);
         TickCustomers(state, dt, rng, events);
     }
@@ -543,6 +654,21 @@ public static class Simulation
 
         state.RushTimer += dt;
         if (state.RushTimer >= Balance.RushIntervalSeconds) state.RushTimer = 0.0;
+    }
+
+    /// <summary>
+    /// Ages every slot that has not just dispensed. Static Cell banks against
+    /// this while dry and Vintage Vial ages bottles against it while stocked;
+    /// both reset it on sale.
+    /// </summary>
+    private static void TickIdle(GameState state, double dt)
+    {
+        foreach (var slot in state.Slots)
+        {
+            if (!slot.Unlocked || slot.DrinkId is null) continue;
+            slot.IdleSeconds = Math.Min(slot.IdleSeconds + dt,
+                                        Math.Max(Balance.ChargeMaxSeconds, Balance.AgeingMaxSeconds));
+        }
     }
 
     private static void TickCustomers(GameState state, double dt, Random rng, ISimEvents? events)

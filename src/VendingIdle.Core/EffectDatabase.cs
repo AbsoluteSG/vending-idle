@@ -63,7 +63,45 @@ public enum EffectKind
     DoubleDrop,
 
     /// <summary>Chance a dispense seeds a cascade even when the drink cannot chain.</summary>
-    SparkChain
+    SparkChain,
+
+    // ---- Position, layout and time ---------------------------------------
+    // The grid had no meaning before these: a slot was a slot. Now height,
+    // neighbours and neglect all change what a drink is worth, so *where* you
+    // put something is a decision rather than a formality.
+
+    /// <summary>Worth more the further it falls to the tray.</summary>
+    FallValue,
+
+    /// <summary>Worth more while it sits in the highest unlocked row.</summary>
+    TopRow,
+
+    /// <summary>Every drink in its row crits more often.</summary>
+    RowForeman,
+
+    /// <summary>Worth more when the same drink sits next to it.</summary>
+    TwinBonus,
+
+    /// <summary>Worth more when nothing sits next to it.</summary>
+    LonerBonus,
+
+    /// <summary>Its cascades hop to neighbouring slots rather than round-robin.</summary>
+    DominoRouting,
+
+    /// <summary>Its cascades take one last hop back to where they started.</summary>
+    Boomerang,
+
+    /// <summary>Banks value while its slot sits empty, and pays it out on the next sale.</summary>
+    ChargeUp,
+
+    /// <summary>Bottles gain value the longer they sit unsold.</summary>
+    Ageing,
+
+    /// <summary>Pays bonus tokens for every distinct pack drink loaded in the machine.</summary>
+    Curator,
+
+    /// <summary>Counts as any drink when a neighbour checks what is beside it.</summary>
+    Mimic
 }
 
 public sealed class EffectDef
@@ -120,6 +158,43 @@ public static class EffectStrength
 
     /// <summary>Chance to start a cascade from a drink that has no chain of its own.</summary>
     public static double SparkChance(int level) => level <= 0 ? 0.0 : 0.05 + 0.03 * level;
+
+    // ---- Position, layout and time ---------------------------------------
+
+    /// <summary>Value multiplier per row of fall. Capped by the grid, then by Balance.</summary>
+    public static double FallValue(int level, int rows) =>
+        level <= 0 ? 0.0
+        : Math.Min(Balance.FallValueMax,
+                   Balance.FallValuePerRow * rows * (0.5 + 0.1 * level));
+
+    public static double TopRowValue(int level) =>
+        level <= 0 ? 0.0 : Balance.TopRowBonus * (0.5 + 0.1 * level);
+
+    /// <summary>Crit chance handed to every drink sharing the foreman's row.</summary>
+    public static double RowCritBonus(int level) => level <= 0 ? 0.0 : 0.03 + 0.02 * level;
+
+    public static double TwinValue(int level) => level <= 0 ? 0.0 : 0.25 + 0.15 * level;
+    public static double LonerValue(int level) => level <= 0 ? 0.0 : 0.30 + 0.18 * level;
+
+    /// <summary>Chance a finished cascade loops back to its origin.</summary>
+    public static double BoomerangChance(int level) => level <= 0 ? 0.0 : 0.15 + 0.09 * level;
+
+    /// <summary>Flat value banked per idle second, before the time cap.</summary>
+    public static double ChargeRate(int level) =>
+        level <= 0 ? 0.0 : Balance.ChargePerSecond * (0.4 + 0.12 * level);
+
+    /// <summary>Value multiplier added per idle second, before the time cap.</summary>
+    public static double AgeingRate(int level) =>
+        level <= 0 ? 0.0 : Balance.AgeingPerSecond * (0.4 + 0.12 * level);
+
+    /// <summary>
+    /// Bonus tokens per distinct pack drink loaded. Small per drink on purpose:
+    /// it multiplies against however many slots the player runs, and at 0.3+0.25
+    /// per level a three-slot machine was already earning five times the base
+    /// token rate -- which quadrupled crates in a greedy half hour and dragged
+    /// the whole money curve up behind it.
+    /// </summary>
+    public static double CuratorTokens(int level) => level <= 0 ? 0.0 : 0.06 + 0.04 * level;
 }
 
 public static class EffectDatabase
@@ -198,11 +273,102 @@ public static class EffectDatabase
         },
         new()
         {
+            Kind = EffectKind.FallValue,
+            ShapesChain = false,
+            Describe = l => "+" + Pct(EffectStrength.FallValue(l, 1)) + " value per row of fall"
+        },
+        new()
+        {
+            Kind = EffectKind.TopRow,
+            ShapesChain = false,
+            Describe = l => "+" + Pct(EffectStrength.TopRowValue(l)) + " value on the top row"
+        },
+        new()
+        {
+            Kind = EffectKind.RowForeman,
+            ShapesChain = false,
+            Describe = l => "+" + Pct(EffectStrength.RowCritBonus(l)) + " crit for its whole row"
+        },
+        new()
+        {
+            Kind = EffectKind.TwinBonus,
+            ShapesChain = false,
+            Describe = l => "+" + Pct(EffectStrength.TwinValue(l)) + " value beside its twin"
+        },
+        new()
+        {
+            Kind = EffectKind.LonerBonus,
+            ShapesChain = false,
+            Describe = l => "+" + Pct(EffectStrength.LonerValue(l)) + " value with no neighbours"
+        },
+        new()
+        {
+            Kind = EffectKind.DominoRouting,
+            ShapesChain = true,
+            Describe = _ => "its chains travel slot to slot"
+        },
+        new()
+        {
+            Kind = EffectKind.Boomerang,
+            ShapesChain = true,
+            Describe = l => Pct(EffectStrength.BoomerangChance(l)) + " for a chain to loop back"
+        },
+        new()
+        {
+            Kind = EffectKind.ChargeUp,
+            ShapesChain = false,
+            Describe = l => "banks " + Money.Cash(EffectStrength.ChargeRate(l)) + "/s while empty"
+        },
+        new()
+        {
+            Kind = EffectKind.Ageing,
+            ShapesChain = false,
+            Describe = l => "+" + Pct(EffectStrength.AgeingRate(l)) + " value per second unsold"
+        },
+        new()
+        {
+            Kind = EffectKind.Curator,
+            ShapesChain = false,
+            Describe = l => "+" + EffectStrength.CuratorTokens(l)
+                                      .ToString("0.##", CultureInfo.InvariantCulture)
+                            + " tk per distinct drink loaded"
+        },
+        new()
+        {
+            Kind = EffectKind.Mimic,
+            ShapesChain = false,
+            Describe = _ => "counts as any drink to its neighbours"
+        },
+        new()
+        {
             Kind = EffectKind.SparkChain,
             ShapesChain = false,
             Describe = l => Pct(EffectStrength.SparkChance(l)) + " to start a chain"
         }
     };
 
-    public static EffectDef Get(EffectKind kind) => All[(int)kind];
+    /// <summary>
+    /// Built by scanning rather than indexing <see cref="All"/> by enum value.
+    /// The list and the enum used to have to stay in the same order by hand, and
+    /// inserting a kind anywhere but the end silently shifted every description
+    /// onto the wrong effect -- a mistake with no compiler error and no obvious
+    /// symptom.
+    /// </summary>
+    private static readonly EffectDef[] ByKind = BuildLookup();
+
+    private static EffectDef[] BuildLookup()
+    {
+        var count = Enum.GetValues<EffectKind>().Length;
+        var table = new EffectDef[count];
+
+        foreach (var def in All) table[(int)def.Kind] = def;
+
+        foreach (var kind in Enum.GetValues<EffectKind>())
+            if (table[(int)kind] is null)
+                throw new InvalidOperationException($"EffectDatabase has no entry for {kind}.");
+
+        return table;
+    }
+
+    public static EffectDef Get(EffectKind kind) => ByKind[(int)kind];
 }

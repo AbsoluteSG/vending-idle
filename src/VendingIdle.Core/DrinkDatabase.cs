@@ -379,6 +379,152 @@ public static class DrinkDatabase
             RestockGrowth = 1.035,
             SoundPitch = -0.46
         },
+        // ---- Position, layout and time -----------------------------------
+        // The grid meant nothing before these. Height, neighbours and neglect now
+        // all change what a bottle is worth, so where a drink goes is a decision.
+        new()
+        {
+            Id = "longdrop_lager",
+            Name = "Longdrop Lager",
+            Rarity = Rarity.Rare,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.FallValue,
+            Color = 0x6FB1D6,
+            Value = 3.6,
+            RestockUnitCost = 1.55,
+            RestockGrowth = 1.02,
+            SoundPitch = -0.21
+        },
+        new()
+        {
+            Id = "skyline_soda",
+            Name = "Skyline Soda",
+            Rarity = Rarity.Uncommon,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.TopRow,
+            Color = 0x8FD6FF,
+            Value = 1.5,
+            RestockUnitCost = 0.66,
+            RestockGrowth = 1.01,
+            SoundPitch = 0.12
+        },
+        new()
+        {
+            Id = "foreman_fizz",
+            Name = "Foreman Fizz",
+            Rarity = Rarity.Epic,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.RowForeman,
+            Color = 0xE8A33D,
+            Value = 7.0,
+            RestockUnitCost = 2.95,
+            RestockGrowth = 1.02,
+            SoundPitch = -0.14
+        },
+        new()
+        {
+            Id = "twin_tonic",
+            Name = "Twin Tonic",
+            Rarity = Rarity.Common,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.TwinBonus,
+            Color = 0x7FE0C4,
+            Value = 0.55,
+            RestockUnitCost = 0.24,
+            RestockGrowth = 1.0,
+            SoundPitch = 0.25
+        },
+        new()
+        {
+            Id = "hermits_tonic",
+            Name = "Hermit's Tonic",
+            Rarity = Rarity.Common,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.LonerBonus,
+            Color = 0xB8A1E0,
+            Value = 0.56,
+            RestockUnitCost = 0.24,
+            RestockGrowth = 1.0,
+            SoundPitch = 0.19
+        },
+        new()
+        {
+            Id = "domino_drop",
+            Name = "Domino Drop",
+            Rarity = Rarity.Epic,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.DominoRouting,
+            Color = 0xF25C54,
+            Value = 6.8,
+            RestockUnitCost = 2.85,
+            RestockGrowth = 1.02,
+            SoundPitch = -0.17
+        },
+        new()
+        {
+            Id = "boomerang_brew",
+            Name = "Boomerang Brew",
+            Rarity = Rarity.Rare,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.Boomerang,
+            Color = 0xD98E4A,
+            Value = 3.5,
+            RestockUnitCost = 1.5,
+            RestockGrowth = 1.02,
+            SoundPitch = -0.2
+        },
+        new()
+        {
+            Id = "static_cell",
+            Name = "Static Cell",
+            Rarity = Rarity.Rare,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.ChargeUp,
+            Color = 0xC0F03A,
+            Value = 3.4,
+            RestockUnitCost = 1.45,
+            RestockGrowth = 1.02,
+            SoundPitch = -0.23
+        },
+        new()
+        {
+            Id = "vintage_vial",
+            Name = "Vintage Vial",
+            Rarity = Rarity.Legendary,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.Ageing,
+            Color = 0xB07A3C,
+            Value = 12.0,
+            RestockUnitCost = 5.0,
+            RestockGrowth = 1.03,
+            SoundPitch = -0.34
+        },
+        new()
+        {
+            Id = "curators_cola",
+            Name = "Curator's Cola",
+            Rarity = Rarity.Uncommon,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.Curator,
+            Color = 0xCBA6D6,
+            Value = 1.5,
+            RestockUnitCost = 0.66,
+            RestockGrowth = 1.01,
+            SoundPitch = 0.09
+        },
+        new()
+        {
+            Id = "mimic_mist",
+            Name = "Mimic Mist",
+            Rarity = Rarity.Legendary,
+            Source = DrinkSource.Pack,
+            Effect = EffectKind.Mimic,
+            Color = 0xA8B2C4,
+            Value = 11.5,
+            RestockUnitCost = 4.8,
+            RestockGrowth = 1.03,
+            SoundPitch = -0.36
+        },
         new()
         {
             Id = "midas_mixer",

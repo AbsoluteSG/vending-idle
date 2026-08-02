@@ -53,6 +53,36 @@ but each carries an aura (active while loaded *and stocked*) or an on-dispense p
 Duplicates raise the effect's level. Purchase drinks stay pure value -- effects push
 on every lever except the value curve, deliberately.
 
+### Position, layout and time
+
+The grid used to mean nothing -- a slot was a slot. Eleven drinks now make *where*
+you put something a decision:
+
+| Drink | Effect |
+|---|---|
+| Longdrop Lager | worth more the further it falls to the tray |
+| Skyline Soda | worth more on the highest unlocked row |
+| Foreman Fizz | every drink sharing its row crits more often |
+| Twin Tonic / Hermit's Tonic | worth more beside its twin / with no neighbours at all |
+| Domino Drop | its cascades hop to *neighbouring* slots instead of round-robin |
+| Boomerang Brew | a finished cascade loops back for one last hop at the origin |
+| Static Cell | banks value while its slot sits empty, paid out on the next sale |
+| Vintage Vial | bottles gain value the longer they sit unsold |
+| Curator's Cola | bonus tokens per distinct pack drink loaded |
+| Mimic Mist | counts as any drink when a neighbour checks what is beside it |
+
+Domino Drop is worth calling out: cascades normally target from the round-robin
+cursor, which does not move during a shake, so chains pile onto the same cells and
+read as random. Routing through neighbours makes "a chain is running across slots
+5, 6, 7" literally what you see.
+
+These bend the "no effect multiplies raw value" rule, knowingly. That rule exists
+because two balance passes died to *unbounded* multipliers stacking; every one of
+these is capped by something physical -- how tall the cabinet is, or a hard ceiling
+on banked time -- so none of them can run away. Static Cell originally banked a
+flat cash figure and a drink worth 8 was paying out 50 a bottle; it scales by the
+drink's own value now.
+
 **Every effect fires when the drink is sold**, not while it sits in the machine.
 They used to be auras: passive while loaded *and stocked*, which quietly asked you
 to keep the whole cabinet topped up to get anything out of them. This is not a game

@@ -23,6 +23,15 @@ public sealed class Slot
     /// <summary>Seconds accumulated toward the next auto-restock unit.</summary>
     public double AutoTimer { get; set; }
 
+    /// <summary>
+    /// Seconds since this slot last dispensed anything. Two effects read it and
+    /// mean different things by it: Static Cell banks a payout while the slot sits
+    /// dry, and Vintage Vial ages the bottles sitting in it. One field rather than
+    /// two because both are asking the same question -- how long has nothing come
+    /// out of here -- and both reset on the same event.
+    /// </summary>
+    public double IdleSeconds { get; set; }
+
     [JsonIgnore] public int Row => Index / Balance.Columns;
     [JsonIgnore] public int Column => Index % Balance.Columns;
 
