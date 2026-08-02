@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using VendingIdle.Core;
 using VendingIdle.Render;
@@ -22,6 +24,37 @@ public static class SlotInspector
     /// <summary>Wheel scroll for the drink list -- twelve drinks no longer fit the panel.</summary>
     private static float _scroll;
 
+    /// <summary>Total room across every slot an action would touch.</summary>
+    private static int RoomAcross(GameState state, IReadOnlyList<int> targets)
+    {
+        var room = 0;
+        foreach (var index in targets)
+            if (state.SlotAt(index) is { } slot && slot.DrinkId is not null)
+                room += state.RoomIn(slot);
+        return room;
+    }
+
+    /// <summary>
+    /// What restocking <paramref name="units"/> into every target would cost.
+    /// Summed per slot because unit price climbs with how full that slot already
+    /// is -- one price times the count would be wrong in both directions.
+    /// </summary>
+    private static double RestockCostAcross(GameState state, IReadOnlyList<int> targets, int units)
+    {
+        var total = 0.0;
+        foreach (var index in targets)
+        {
+            if (state.SlotAt(index) is not { } slot || slot.DrinkId is null) continue;
+
+            var want = Math.Min(units, state.RoomIn(slot));
+            if (want > 0) total += state.RestockCost(slot, want);
+        }
+
+        return total;
+    }
+
+
+
     /// <param name="focusIndex">
     /// Keyboard-focused drink row, or -1 when the pointer owns this panel. The
     /// list is the only thing keys drive here: the buttons above it are a handful
@@ -29,13 +62,29 @@ public static class SlotInspector
     /// focus through them would make W/S walk past things it cannot press.
     /// </param>
     /// <param name="activate">Enter was pressed while this panel held focus.</param>
+    /// <param name="targets">
+    /// Every slot the panel's actions apply to -- just the selection normally,
+    /// the whole row while shift is held. Prices shown are the total for these,
+    /// not for one slot: a Fill button that charges four times what it advertises
+    /// is worse than having no row mode at all.
+    /// </param>
     public static InspectorAction Draw(Ui ui, GameState state, Rectangle bounds, int selectedIndex,
-                                       int focusIndex = -1, bool activate = false)
+                                       int focusIndex = -1, bool activate = false,
+                                       IReadOnlyList<int>? targets = null)
     {
         var action = InspectorAction.None;
 
         ui.Panel(bounds, "SELECTED SLOT");
         var body = Ui.PanelBody(bounds);
+
+        // Only unlocked slots can be acted on, so a row containing locked cells
+        // simply acts on fewer of them rather than refusing outright.
+        var acting = (targets ?? new[] { selectedIndex })
+            .Where(i => state.SlotAt(i) is { Unlocked: true })
+            .ToList();
+
+        if (acting.Count == 0) acting.Add(selectedIndex);
+        var rowMode = acting.Count > 1;
 
         var slot = state.SlotAt(selectedIndex);
         if (slot is null || !slot.Unlocked)
@@ -106,25 +155,29 @@ public static class SlotInspector
             y += 24;
 
             // ---- Restock buttons -------------------------------------------
-            var room = state.RoomIn(slot);
+            var room = RoomAcross(state, acting);
             var buttonWidth = (body.Width - 12) / 3;
             var buttonRect = new Rectangle(body.X, y, buttonWidth, 30);
 
-            var cost1 = state.RestockCost(slot, Math.Min(1, room));
+            var scope = rowMode ? "the row" : "the slot";
+
+            var cost1 = RestockCostAcross(state, acting, 1);
             if (ui.Button(buttonRect, "+1", room > 0 && state.Money >= cost1,
-                          ButtonStyle.Buy, $"Restock 1 bottle for {Money.Cash(cost1)}"))
+                          ButtonStyle.Buy,
+                          $"Restock 1 bottle in {scope} for {Money.Cash(cost1)}"))
                 action.RestockUnits = 1;
 
-            var cost5 = state.RestockCost(slot, Math.Min(5, room));
+            var cost5 = RestockCostAcross(state, acting, 5);
             buttonRect.X += buttonWidth + 6;
             if (ui.Button(buttonRect, "+5", room > 0 && state.Money >= cost1,
-                          ButtonStyle.Buy, $"Restock up to 5 bottles, {Money.Cash(cost5)}"))
+                          ButtonStyle.Buy,
+                          $"Restock up to 5 bottles in {scope}, {Money.Cash(cost5)}"))
                 action.RestockUnits = 5;
 
-            var costFull = state.RestockCost(slot, room);
+            var costFull = RestockCostAcross(state, acting, int.MaxValue);
             buttonRect.X += buttonWidth + 6;
             if (ui.Button(buttonRect, "Fill", room > 0 && state.Money >= cost1,
-                          ButtonStyle.Buy, $"Fill the slot, {Money.Cash(costFull)}"))
+                          ButtonStyle.Buy, $"Fill {scope}, {Money.Cash(costFull)}"))
                 action.RestockUnits = -1;
 
             y += 38;
@@ -141,10 +194,20 @@ public static class SlotInspector
         }
         else
         {
-            var cost = state.NextAutoRestockerCost;
-            if (ui.Button(autoRect, $"Auto-restocker  {Money.Cash(cost)}",
-                          state.Money >= cost, ButtonStyle.Buy,
-                          "Keeps this slot topped up on its own", FontSize.Small))
+            // Each restocker costs more than the last, so a row of them is the sum
+            // of an escalating run rather than one price times the count.
+            var missing = acting.Count(i => state.SlotAt(i) is { Unlocked: true, HasAutoRestocker: false });
+            var cost = state.AutoRestockerCostFor(Math.Max(1, missing));
+
+            var label = rowMode && missing > 1
+                ? $"Auto-restock row ({missing})  {Money.Cash(cost)}"
+                : $"Auto-restocker  {Money.Cash(cost)}";
+
+            if (ui.Button(autoRect, label, state.Money >= cost, ButtonStyle.Buy,
+                          rowMode && missing > 1
+                              ? $"Automates {missing} slots in this row"
+                              : "Keeps this slot topped up on its own",
+                          FontSize.Small))
                 action.BuyAutoRestocker = true;
         }
 

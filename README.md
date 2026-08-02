@@ -183,6 +183,8 @@ dotnet run --project tools/VendingIdle.SimTest -- --curve  # progression report
 | Click a price ticket | Buy that compartment |
 | `W` `A` `S` `D` | Move around the cabinet; at the edge, step into an open drawer |
 | Hold `Shift` | Target the selected slot's whole row -- the cabinet marks what it would hit |
+| `Shift` + a slot action | Load a drink, restock or automate the **whole row**; prices shown are the row total |
+| `F9` | Reset the save and start over (keeps the old one as `.bak`) |
 | `1`-`9` | Load that purchase drink into the target (pack drinks are excluded: their order is unpredictable) |
 | `Enter` | Shake, or submit inside a focused drawer |
 | `Esc` | Hand focus back to the cabinet |
@@ -195,6 +197,24 @@ dotnet run --project tools/VendingIdle.SimTest -- --curve  # progression report
 | `M` / the speaker, top right | Mute or unmute all sound |
 | `R` | Restock everything |
 | `Ctrl`+`S` / `F5` | Save |
+
+Holding shift widens every slot action to the row, and the prices follow. That
+matters more than it sounds: restock unit cost climbs with how full a slot already
+is, and each auto-restocker costs more than the last, so a row total is the sum of
+an escalating run rather than one price times three. `Auto-restock row (3)` quotes
+$1,118 where three separate purchases at the first price would suggest $1,800. A
+button that charges four times what it advertises is worse than having no row mode,
+so those totals are asserted in the test suite.
+
+A row restock fills what it can afford and stops, rather than refusing outright --
+restocking charges per bottle as it goes, so a row that outruns your balance leaves
+you with partial shelves instead of a denial and no change.
+
+`F9` wipes the save and starts fresh, for balance testing. There is no confirmation
+prompt -- the point is to be able to re-run an opening without ceremony -- but the
+previous save is copied to `save.json.bak` first. "No confirmation" and
+"unrecoverable" are fine apart and bad together, and a copy is cheaper than a dialog
+nobody wants during a tuning pass.
 
 Progress saves every 15 seconds and on exit, to whichever your platform expects:
 

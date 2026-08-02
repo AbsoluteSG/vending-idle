@@ -193,8 +193,27 @@ public sealed class GameState
     [JsonIgnore] public double NextSlotCost =>
         Balance.Cost(Balance.SlotBaseCost, Balance.SlotCostGrowth, SlotsOwned);
 
-    [JsonIgnore] public double NextAutoRestockerCost =>
-        Balance.Cost(Balance.AutoRestockerBaseCost, Balance.AutoRestockerCostGrowth, AutoRestockersOwned);
+    [JsonIgnore] public double NextAutoRestockerCost => AutoRestockerCostFor(1);
+
+    /// <summary>
+    /// Cost of the next <paramref name="count"/> auto-restockers together. The
+    /// price climbs with how many are already owned, so buying a row of them is
+    /// the sum of an escalating run and never one price times the count -- which
+    /// is what a row-mode button would otherwise advertise.
+    /// </summary>
+    public double AutoRestockerCostFor(int count)
+    {
+        if (count <= 0) return 0.0;
+
+        var owned = AutoRestockersOwned;
+        var total = 0.0;
+
+        for (var i = 0; i < count; i++)
+            total += Balance.Cost(Balance.AutoRestockerBaseCost,
+                                  Balance.AutoRestockerCostGrowth, owned + i);
+
+        return total;
+    }
 
     [JsonIgnore] public int TotalStock => Slots.Sum(s => s.Stock);
 

@@ -284,6 +284,8 @@ public sealed class VendingGame : Game, ISimEvents
 
         if (WasPressed(keyboard, Keys.C)) HandleCrateKey();
 
+        if (WasPressed(keyboard, Keys.F9)) ResetGame();
+
         if (WasPressed(keyboard, Keys.R))
         {
             if (_state.RestockAll() > 0) _sfx.Purchase();
@@ -567,6 +569,43 @@ public sealed class VendingGame : Game, ISimEvents
         }
     }
 
+    /// <summary>
+    /// Wipes the save and starts over -- a balance-testing tool, so it is one key
+    /// with no confirmation prompt to sit through between runs.
+    ///
+    /// The old save is copied to &lt;path&gt;.bak first. "No confirmation" and
+    /// "unrecoverable" are fine apart and awful together: a mistyped function key
+    /// should not be able to cost a real save, and a copy is cheaper than a
+    /// dialog nobody wants during a tuning pass.
+    /// </summary>
+    private void ResetGame()
+    {
+        SaveSystem.Backup(_options.SavePath);
+
+        _state = GameState.NewGame();
+
+        _fx.Clear();
+        _banners.Clear();
+
+        _machine.SelectedSlot = FirstUnlockedSlot();
+        _focus = Focus.Machine;
+        _upgradeFocus = 0;
+        _inspectorFocus = 0;
+
+        _pan = 0f;
+        _panTarget = 0f;
+        _smoothedIncome = 0.0;
+        _earnedLastFrame = 0.0;
+        _tickAccumulator = 0.0;
+        _autosaveTimer = 0.0;
+        _offlineReport = null;
+
+        SaveSystem.Save(_state, _options.SavePath);
+
+        _banners.Show("GAME RESET", BannerTier.Slam, Theme.Negative, "previous save kept as .bak");
+        _sfx.Purchase();
+    }
+
     /// <summary>Keeps the camera on the selected slot when the keys move it.</summary>
     private void FollowSelection()
     {
@@ -785,7 +824,8 @@ public sealed class VendingGame : Game, ISimEvents
         if (_inspectorDrawer.Visible)
             inspectorAction = SlotInspector.Draw(_ui, _state, inspectorBounds, _machine.SelectedSlot,
                 _focus == Focus.Inspector ? _inspectorFocus : -1,
-                _focus == Focus.Inspector && submit);
+                _focus == Focus.Inspector && submit,
+                TargetedSlots().ToList());
 
         if (_upgradeDrawer.DrawTab(_ui, upgradeBounds, screen)) _upgradeDrawer.Toggle();
         if (_inspectorDrawer.DrawTab(_ui, inspectorBounds, screen)) _inspectorDrawer.Toggle();
@@ -856,29 +896,42 @@ public sealed class VendingGame : Game, ISimEvents
 
         if (machine.Save) SaveSystem.Save(_state, _options.SavePath);
 
+        // Every inspector action runs across the targeted slots -- one of them
+        // normally, the whole row while shift is held.
         if (inspector.AssignDrinkId is not null)
-            _state.TryAssignDrink(_machine.SelectedSlot, inspector.AssignDrinkId);
+            foreach (var index in TargetedSlots())
+                _state.TryAssignDrink(index, inspector.AssignDrinkId);
 
         if (inspector.ClearAssignment)
-            _state.TryAssignDrink(_machine.SelectedSlot, null);
+            foreach (var index in TargetedSlots())
+                _state.TryAssignDrink(index, null);
 
         if (inspector.RestockUnits != 0)
         {
-            var slot = _state.SlotAt(_machine.SelectedSlot);
-            if (slot is not null)
+            var added = 0;
+            foreach (var index in TargetedSlots())
             {
-                var added = inspector.RestockUnits < 0
+                if (_state.SlotAt(index) is not { } slot) continue;
+
+                // Restock charges per bottle as it goes and stops when the money
+                // runs out, so a row that outruns the balance fills what it can
+                // rather than half-charging for a refusal.
+                added += inspector.RestockUnits < 0
                     ? _state.RestockToFull(slot)
                     : _state.Restock(slot, inspector.RestockUnits);
-
-                if (added > 0) bought = true;
-                else refused = true;
             }
+
+            if (added > 0) bought = true;
+            else refused = true;
         }
 
         if (inspector.BuyAutoRestocker)
         {
-            if (_state.TryBuyAutoRestocker(_machine.SelectedSlot)) bought = true;
+            var automated = 0;
+            foreach (var index in TargetedSlots())
+                if (_state.TryBuyAutoRestocker(index)) automated++;
+
+            if (automated > 0) bought = true;
             else refused = true;
         }
 

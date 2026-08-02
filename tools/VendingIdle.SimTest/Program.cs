@@ -45,6 +45,8 @@ public static class Program
         SaveRoundTripsExactly();
         CostCurvesAreMonotonic();
         CorruptSaveDoesNotThrow();
+        RowCostsAreTheSumOfTheRun();
+        ResetBacksUpTheSaveFirst();
         OldSaveMigratesToTheNarrowerGrid();
         TheOpeningIsNotAGiveaway();
         TokensAccrueAndCratesOpen();
@@ -1030,6 +1032,82 @@ public static class Program
         Check($"a day of perfect play lands on the cap ({opened})",
               opened >= Balance.SupplyQuotaPacksMax * 0.9 &&
               opened <= Balance.SupplyQuotaPacksMax * 1.1);
+    }
+
+    /// <summary>
+    /// Row-mode buys several things at once, and their prices escalate, so the
+    /// quoted total has to be the sum of the run rather than one price times the
+    /// count. A button that charges four times what it advertises is worse than
+    /// having no row mode at all.
+    /// </summary>
+    private static void RowCostsAreTheSumOfTheRun()
+    {
+        var state = GameState.NewGame();
+        state.Money = 1e9;
+
+        var one = state.NextAutoRestockerCost;
+        var three = state.AutoRestockerCostFor(3);
+
+        Check("one restocker matches the next-cost property",
+              Math.Abs(state.AutoRestockerCostFor(1) - one) < 1e-9);
+
+        // Strictly more than three at the first price, because each one raises
+        // the price of the next.
+        Check($"three restockers cost more than 3x one ({three:0} vs {one * 3:0})",
+              three > one * 3.0);
+
+        // And exactly the sum of the three individual prices.
+        var expected = 0.0;
+        for (var i = 0; i < 3; i++)
+            expected += Balance.Cost(Balance.AutoRestockerBaseCost,
+                                     Balance.AutoRestockerCostGrowth, i);
+
+        Check("the quoted row price is the escalating run",
+              Math.Abs(three - expected) < 1e-9);
+
+        // Buying them one at a time really does cost the quoted total.
+        var before = state.Money;
+        for (var i = 0; i < 3; i++)
+        {
+            state.TryBuySlot(i);
+            state.TryBuyAutoRestocker(i);
+        }
+
+        var slotCost = state.Money;
+        Check("buying three charges what the row quoted",
+              state.AutoRestockersOwned == 3 && before - slotCost > three - 1e-6);
+
+        Check("zero targets cost nothing", state.AutoRestockerCostFor(0) == 0.0);
+    }
+
+    /// <summary>
+    /// F9 wipes the save with no confirmation, so the copy it leaves behind is
+    /// the only thing standing between a mistyped key and a lost afternoon.
+    /// </summary>
+    private static void ResetBacksUpTheSaveFirst()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"vending-backup-{Guid.NewGuid():N}.json");
+
+        var state = GameState.NewGame();
+        state.Money = 12_345.0;
+        SaveSystem.Save(state, path);
+
+        var backup = SaveSystem.Backup(path);
+
+        Check("backing up a save returns its path", backup is not null && File.Exists(backup));
+
+        // Overwrite the original the way a reset would, then read the copy back.
+        SaveSystem.Save(GameState.NewGame(), path);
+        var restored = SaveSystem.Load(backup);
+
+        Check("the backup still holds the pre-reset state",
+              restored is not null && Math.Abs(restored.Money - 12_345.0) < 1e-9);
+
+        Check("backing up a missing save is a no-op, not a throw",
+              SaveSystem.Backup(path + ".nope") is null);
+
+        File.Delete(path);
+        if (backup is not null) File.Delete(backup);
     }
 
     /// <summary>Grants copies and loads the drink into the given slot, stocked.</summary>

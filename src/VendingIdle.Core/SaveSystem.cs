@@ -92,4 +92,34 @@ public static class SaveSystem
         path ??= DefaultPath;
         if (File.Exists(path)) File.Delete(path);
     }
+
+    /// <summary>
+    /// Copies the save aside before something destroys it. Returns the backup
+    /// path, or null when there was nothing to copy.
+    ///
+    /// Deliberately best-effort: this exists to make an irreversible action
+    /// recoverable, so a failure to write the copy must never stop the caller or
+    /// take the game down with it.
+    /// </summary>
+    public static string? Backup(string? path = null)
+    {
+        path ??= DefaultPath;
+        if (!File.Exists(path)) return null;
+
+        var backup = path + ".bak";
+
+        try
+        {
+            File.Copy(path, backup, overwrite: true);
+            return backup;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
 }
