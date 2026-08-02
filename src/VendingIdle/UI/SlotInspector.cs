@@ -19,6 +19,9 @@ public struct InspectorAction
 /// <summary>Everything you can do to the currently selected slot.</summary>
 public static class SlotInspector
 {
+    /// <summary>Wheel scroll for the drink list -- twelve drinks no longer fit the panel.</summary>
+    private static float _scroll;
+
     public static InspectorAction Draw(Ui ui, GameState state, Rectangle bounds, int selectedIndex)
     {
         var action = InspectorAction.None;
@@ -57,6 +60,15 @@ public static class SlotInspector
 
             ui.T.Draw(ui.Sb, drink.Name, new Vector2(body.X + 22, y), Theme.Text);
             y += 26;
+
+            if (drink.Effect is { } headerEffect)
+            {
+                var level = state.EffectLevelOf(drink);
+                ui.T.Draw(ui.Sb,
+                    $"{EffectDatabase.Get(headerEffect).Describe(level)}  •  Lv {level}",
+                    new Vector2(body.X, y), Theme.Accent, FontSize.Small);
+                y += 20;
+            }
 
             ui.StatRow(new Rectangle(body.X, y, body.Width, 16),
                 "Value per bottle",
@@ -136,13 +148,32 @@ public static class SlotInspector
         ui.T.Draw(ui.Sb, "LOAD DRINK", new Vector2(body.X, y), Theme.TextDim, FontSize.Small);
         y += 20;
 
+        const int rowStride = 44;
+        var footer = slot.DrinkId is not null && slot.Stock > 0 ? 18 : 0;
+        var listArea = new Rectangle(body.X, y, body.Width, Math.Max(0, body.Bottom - y - footer));
+        var contentHeight = DrinkDatabase.All.Count * rowStride;
+        var maxScroll = Math.Max(0, contentHeight - listArea.Height);
+
+        if (ui.Hovering(listArea) && ui.WheelDelta != 0)
+            _scroll -= ui.WheelDelta * 0.35f;
+        _scroll = MathHelper.Clamp(_scroll, 0f, maxScroll);
+
+        ui.PushClip(listArea);
+        var mouseInList = listArea.Contains(ui.Mouse);
+        var rowY = listArea.Y - (int)_scroll;
+
         foreach (var def in DrinkDatabase.All)
         {
-            var rowRect = new Rectangle(body.X, y, body.Width, 40);
+            var rowRect = new Rectangle(body.X, rowY, body.Width, 40);
+            rowY += rowStride;
+
+            if (rowRect.Bottom < listArea.Y || rowRect.Y > listArea.Bottom) continue;
+
             var unlocked = DrinkDatabase.IsUnlocked(def, state);
             var isCurrent = slot.DrinkId == def.Id;
+            var isPack = def.Source == DrinkSource.Pack;
 
-            var hovered = unlocked && !ui.ClickConsumed && ui.Hovering(rowRect);
+            var hovered = unlocked && mouseInList && !ui.ClickConsumed && ui.Hovering(rowRect);
             var bg = isCurrent ? Theme.ButtonActive
                    : hovered ? Theme.ButtonHover
                    : unlocked ? Theme.PanelAlt
@@ -158,7 +189,25 @@ public static class SlotInspector
             ui.T.Draw(ui.Sb, def.Name, new Vector2(rowRect.X + 28, rowRect.Y + 4),
                       nameColor, FontSize.Small);
 
-            if (unlocked)
+            if (isPack && def.Effect is { } effect)
+            {
+                if (unlocked)
+                {
+                    var level = state.EffectLevelOf(def);
+                    ui.T.Draw(ui.Sb,
+                        ui.T.Fit(EffectDatabase.Get(effect).Describe(level),
+                                 rowRect.Width - 78, FontSize.Small),
+                        new Vector2(rowRect.X + 28, rowRect.Y + 21),
+                        Theme.Accent, FontSize.Small);
+                }
+                else
+                {
+                    ui.T.Draw(ui.Sb, "found in supply crates",
+                        new Vector2(rowRect.X + 28, rowRect.Y + 21),
+                        Theme.TextFaint, FontSize.Small);
+                }
+            }
+            else if (unlocked)
             {
                 ui.T.Draw(ui.Sb,
                     $"{Money.Cash(def.Value)} each  •  {Money.Cash(def.RestockUnitCost)} restock",
@@ -171,23 +220,35 @@ public static class SlotInspector
                     new Vector2(rowRect.X + 28, rowRect.Y + 21), Theme.TextFaint, FontSize.Small);
             }
 
-            if (isCurrent)
-                ui.T.DrawIn(ui.Sb, "loaded", rowRect, Theme.Accent, FontSize.Small,
-                            Align.Right, padX: 10);
+            var tag = isCurrent ? "loaded"
+                    : isPack && unlocked
+                        ? (state.EffectLevelOf(def) >= Balance.EffectLevelMax
+                            ? "MAX" : $"Lv {state.EffectLevelOf(def)}")
+                        : null;
+
+            if (tag is not null)
+                ui.T.DrawIn(ui.Sb, tag, rowRect,
+                            isCurrent ? Theme.Accent : Theme.TextDim,
+                            FontSize.Small, Align.Right, padX: 10);
+
+            if (hovered && isPack && unlocked)
+                ui.SetTooltip(
+                    $"{Money.Cash(def.Value)} each  •  {Money.Cash(def.RestockUnitCost)} restock",
+                    rowRect);
 
             if (hovered && ui.MousePressed && !isCurrent)
             {
                 ui.ClickConsumed = true;
                 action.AssignDrinkId = def.Id;
             }
-
-            y += 44;
         }
 
+        ui.PopClip();
+
         // Swapping wipes the shelf, so say so before the player finds out.
-        if (slot.DrinkId is not null && slot.Stock > 0)
+        if (footer > 0)
             ui.T.DrawIn(ui.Sb, "Changing drink empties the slot.",
-                new Rectangle(body.X, y, body.Width, 16),
+                new Rectangle(body.X, body.Bottom - 16, body.Width, 16),
                 Theme.TextFaint, FontSize.Small, Align.Center);
 
         return action;

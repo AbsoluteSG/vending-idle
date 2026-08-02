@@ -38,6 +38,7 @@ public sealed class VendingGame : Game, ISimEvents
     private readonly MachineView _machine = new();
     private readonly Effects _fx = new();
     private readonly Sfx _sfx = new();
+    private readonly Crate _crate = new();
 
     // Both start tucked away: the cabinet is the scene, and a menu only exists
     // once you have asked for it.
@@ -100,6 +101,13 @@ public sealed class VendingGame : Game, ISimEvents
 
         _machine.SelectedSlot = FirstUnlockedSlot();
         ApplyDrawerOption();
+
+        if (_options.ForceReveal && _state.PendingRevealId is null)
+        {
+            _state.Tokens = Math.Max(_state.Tokens, (long)Math.Ceiling(_state.NextPackCost));
+            if (_state.TryOpenPack(_rng) is not null) _crate.BeginReveal();
+        }
+
         base.Initialize();
     }
 
@@ -184,6 +192,7 @@ public sealed class VendingGame : Game, ISimEvents
 
         _sfx.BeginFrame();
         _fx.Update((float)dt);
+        _crate.Update((float)dt, _state);
 
         // Ease the camera toward where the wheel asked for. Exponential, so it
         // arrives quickly without ever quite snapping.
@@ -308,6 +317,31 @@ public sealed class VendingGame : Game, ISimEvents
             }
         }
 
+        // ---- Effect-drink feedback ----------------------------------------
+        if (result.Preserved)
+            _fx.SpawnPopup("kept!", origin + new Vector2(0, 16), Theme.Accent, FontSize.Small);
+
+        if (result.CourierSlotIndex >= 0 &&
+            _machine.TryGetCellRect(result.CourierSlotIndex, out var courierCell))
+            _fx.SpawnPopup("+1 delivery",
+                new Vector2(courierCell.Center.X - 30, courierCell.Y - 2),
+                Theme.Positive, FontSize.Small);
+
+        if (result.Chain is { } chain)
+        {
+            var chainDrink = DrinkDatabase.Get(chain.DrinkId);
+            var chainColor = chainDrink is not null
+                ? Theme.FromPacked(chainDrink.Color) : Theme.TextDim;
+
+            if (_machine.TryGetDispensedBottle(chain.SlotIndex, 0, out var chainFrom))
+                _fx.SpawnBottle(chainFrom, _machine.TrayFloorY, chainColor);
+
+            if (_machine.TryGetCellRect(chain.SlotIndex, out var chainCell))
+                _fx.SpawnPopup("+" + Money.Cash(chain.Payout),
+                    new Vector2(chainCell.Center.X - 16, chainCell.Y - 2),
+                    Theme.Crit, FontSize.Normal);
+        }
+
         _fx.FlashTray();
     }
 
@@ -346,6 +380,17 @@ public sealed class VendingGame : Game, ISimEvents
         _ui.Begin(Space.Screen);
         Backdrop.DrawWall(_ui, screen, machineBounds, pan);
 
+        // The floor and the crate standing on it share the cabinet's ground plane,
+        // so they ride the camera. Both are painted before the drawers, which are
+        // meant to slide over the crate rather than under it.
+        _ui.Begin(Space.World);
+        Backdrop.DrawFloor(_ui, screen, machineBounds, FloorY, pan);
+
+        var crateBounds = new Rectangle(machineBounds.X - 190, FloorY - 108, 128, 108);
+        _crate.Draw(_ui, _state, crateBounds, _elapsed);
+
+        _ui.Begin(Space.Screen);
+
         // Drawers are hit-tested before the cabinet so a click on an open menu
         // can never fall through to the delivery flap behind it.
         UpgradeId? upgradeClicked = null;
@@ -359,15 +404,17 @@ public sealed class VendingGame : Game, ISimEvents
         if (_upgradeDrawer.DrawTab(_ui, upgradeBounds, screen)) _upgradeDrawer.Toggle();
         if (_inspectorDrawer.DrawTab(_ui, inspectorBounds, screen)) _inspectorDrawer.Toggle();
 
-        // Everything from here rides the camera.
+        // Everything from here rides the camera again. Crate input runs after the
+        // drawers so an open menu over it wins the click, even though the crate
+        // was painted underneath them.
         _ui.Begin(Space.World);
-        Backdrop.DrawFloor(_ui, screen, machineBounds, FloorY, pan);
+        var crateAction = _crate.HandleInput(_ui, _state);
 
         var machineAction = _machine.Draw(_ui, _state, machineBounds, _fx, _elapsed, _smoothedIncome);
 
-        // Effects are clipped to the cabinet so falling drinks cannot spill out
-        // of it and over the room.
-        _ui.PushClip(machineBounds);
+        // Effects are clipped to the cabinet plus the crate's airspace, so
+        // falling drinks and redeem popups cannot spill over the rest of the room.
+        _ui.PushClip(Rectangle.Union(machineBounds, _crate.EffectBounds));
         _fx.Draw(_ui);
         _ui.PopClip();
 
@@ -381,7 +428,7 @@ public sealed class VendingGame : Game, ISimEvents
         _ui.DrawTooltip(screen);
         _ui.End();
 
-        ApplyActions(inspectorAction, upgradeClicked, machineAction);
+        ApplyActions(inspectorAction, upgradeClicked, machineAction, crateAction);
 
         base.Draw(gameTime);
 
@@ -393,12 +440,29 @@ public sealed class VendingGame : Game, ISimEvents
         }
     }
 
-    private void ApplyActions(InspectorAction inspector, UpgradeId? upgrade, MachineAction machine)
+    private void ApplyActions(InspectorAction inspector, UpgradeId? upgrade, MachineAction machine,
+                              CrateAction crate)
     {
         // A click on a greyed-out button never reaches the state at all, so the
         // refusal has to come from the widget layer.
         var bought = false;
         var refused = _ui.ClickDenied;
+
+        if (crate == CrateAction.Open && _state.TryOpenPack(_rng) is not null)
+            _crate.BeginReveal();
+
+        if (crate == CrateAction.Redeem && _state.RedeemReveal() is { } redeem)
+        {
+            var drink = DrinkDatabase.Get(redeem.DrinkId)!;
+            var origin = new Vector2(_crate.RevealRect.Center.X - 24, _crate.RevealRect.Y - 6);
+
+            _fx.SpawnPopup(drink.Name, origin, Theme.FromPacked(drink.Color), FontSize.Normal);
+            _fx.SpawnPopup(
+                redeem.WasNew ? "NEW!" : redeem.AtMax ? "MAX" : $"Lv {redeem.Level}",
+                origin + new Vector2(8, -22),
+                redeem.WasNew ? Theme.Positive : Theme.Accent,
+                FontSize.Large);
+        }
 
         if (machine.RestockAll)
         {
@@ -508,9 +572,18 @@ public sealed class VendingGame : Game, ISimEvents
     private string? CurrentHint()
     {
         if (_state.TotalStock > 0)
-            return _state.Customers == 0 && _state.Money > 60
-                ? "Hire a customer - they click the machine for you."
-                : null;
+        {
+            if (_state.Customers == 0 && _state.Money > 60)
+                return "Hire a customer - they click the machine for you.";
+
+            if (_state.PendingRevealId is not null)
+                return "A drink is waiting above the crate - click it to claim.";
+
+            if (_state.CanOpenPack)
+                return "The supply crate is full - crack it open.";
+
+            return null;
+        }
 
         // Machine is dry. Which of the three reasons is it?
         var anyDrinkLoaded = false;

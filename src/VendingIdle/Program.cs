@@ -39,6 +39,12 @@ public sealed class LaunchOptions
     /// <summary>Start silent. Implied by <see cref="ScreenshotPath"/>.</summary>
     public bool Muted { get; private set; }
 
+    /// <summary>
+    /// Debug: grant enough tokens and open a crate on launch, so the mystery-box
+    /// reveal can be captured headlessly at any frame of its animation.
+    /// </summary>
+    public bool ForceReveal { get; private set; }
+
     public static LaunchOptions Parse(string[] args)
     {
         var o = new LaunchOptions();
@@ -70,6 +76,10 @@ public sealed class LaunchOptions
 
                 case "--mute":
                     o.Muted = true;
+                    break;
+
+                case "--reveal":
+                    o.ForceReveal = true;
                     break;
             }
         }

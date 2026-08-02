@@ -3,6 +3,14 @@ using System.Collections.Generic;
 
 namespace VendingIdle.Core;
 
+/// <summary>A Chain Fizz follow-up dispense that rode along with the primary one.</summary>
+public readonly struct ChainInfo
+{
+    public int SlotIndex { get; init; }
+    public string? DrinkId { get; init; }
+    public double Payout { get; init; }
+}
+
 /// <summary>What a single dispense produced, so the UI can react to it.</summary>
 public readonly struct ClickResult
 {
@@ -13,6 +21,15 @@ public readonly struct ClickResult
     public int Cans { get; init; }
     public bool Crit { get; init; }
     public bool SpareChange { get; init; }
+
+    /// <summary>Bottomless Cup fired: the bottle was paid for but stayed on the shelf.</summary>
+    public bool Preserved { get; init; }
+
+    /// <summary>Courier Cola fired into this slot (-1 when it did not).</summary>
+    public int CourierSlotIndex { get; init; }
+
+    /// <summary>Set when Chain Fizz vended a second slot along with this one.</summary>
+    public ChainInfo? Chain { get; init; }
 }
 
 /// <summary>
@@ -67,7 +84,10 @@ public static class Simulation
         if (slot is null) return PaySpareChange(state, rng);
 
         var result = DispenseFrom(state, slot, rng, units: 1);
-        AdvanceCursor(state, slot.Index);
+
+        // A chain vended a slot further along, so the cursor has to clear that one
+        // too or the round-robin would serve it again immediately.
+        AdvanceCursor(state, result.Chain?.SlotIndex ?? slot.Index);
         return result;
     }
 
@@ -122,7 +142,10 @@ public static class Simulation
         };
     }
 
-    /// <summary>Nothing loaded anywhere: you shake the machine and get coins back.</summary>
+    /// <summary>
+    /// Nothing loaded anywhere: you shake the machine and get coins back. Spare
+    /// change is not a sale, so it earns no crate tokens and rolls no effects.
+    /// </summary>
     private static ClickResult PaySpareChange(GameState state, Random rng)
     {
         var crit = RollCrit(state, rng);
@@ -139,7 +162,8 @@ public static class Simulation
             Payout = change,
             Cans = 0,
             Crit = crit,
-            SpareChange = true
+            SpareChange = true,
+            CourierSlotIndex = -1
         };
     }
 
@@ -151,6 +175,7 @@ public static class Simulation
     private static ClickResult DispenseFrom(GameState state, Slot slot, Random rng, int units)
     {
         var drink = slot.Drink!;
+        var level = state.EffectLevelOf(drink);
 
         var crit = RollCrit(state, rng);
         var critMult = crit ? Balance.CritMultiplier : 1.0;
@@ -161,12 +186,57 @@ public static class Simulation
         var bonus = crit && slot.Stock > sold ? 1 : 0;
         var cans = sold + bonus;
 
-        slot.Stock -= cans;
+        // Bottomless Cup: the sale happens, the shelf keeps its bottles.
+        var preserved = drink.Effect == EffectKind.StockPreserve && level > 0 &&
+                        rng.NextDouble() < EffectStrength.PreserveChance(level);
+        if (!preserved) slot.Stock -= cans;
 
         var payout = drink.Value * state.ClickValueMultiplier * sold * critMult;
         state.Money += payout;
         state.TotalEarned += payout;
         state.TotalCansSold += cans;
+        state.Tokens += cans * Balance.TokensPerBottle + (crit ? Balance.CritTokenBonus : 0);
+
+        // Courier Cola: chance to drop one free bottle into a dry slot elsewhere.
+        var courierIndex = -1;
+        if (drink.Effect == EffectKind.CourierDrop && level > 0 &&
+            rng.NextDouble() < EffectStrength.CourierChance(level))
+        {
+            var target = FindDrySlot(state, slot.Index);
+            if (target is not null)
+            {
+                target.Stock = 1;
+                courierIndex = target.Index;
+            }
+        }
+
+        // Chain Fizz: chance to vend one more slot alongside this one. The chained
+        // dispense is deliberately plain -- no crit, no proc rolls of its own --
+        // so two Chain Fizz slots can never recurse into each other.
+        ChainInfo? chain = null;
+        if (drink.Effect == EffectKind.ChainDispense && level > 0 &&
+            rng.NextDouble() < EffectStrength.ChainChance(level))
+        {
+            var next = NextStockedSlot(state, excludeIndex: slot.Index);
+            if (next is not null)
+            {
+                var nextDrink = next.Drink!;
+                next.Stock -= 1;
+
+                var chainPayout = nextDrink.Value * state.ClickValueMultiplier;
+                state.Money += chainPayout;
+                state.TotalEarned += chainPayout;
+                state.TotalCansSold += 1;
+                state.Tokens += Balance.TokensPerBottle;
+
+                chain = new ChainInfo
+                {
+                    SlotIndex = next.Index,
+                    DrinkId = nextDrink.Id,
+                    Payout = chainPayout
+                };
+            }
+        }
 
         return new ClickResult
         {
@@ -175,8 +245,28 @@ public static class Simulation
             Payout = payout,
             Cans = cans,
             Crit = crit,
-            SpareChange = false
+            SpareChange = false,
+            Preserved = preserved,
+            CourierSlotIndex = courierIndex,
+            Chain = chain
         };
+    }
+
+    /// <summary>
+    /// A loaded, unlocked slot that has run completely dry -- Courier Cola is
+    /// insurance against dry slots, so it strictly refuses to top up a slot that
+    /// still has anything in it.
+    /// </summary>
+    private static Slot? FindDrySlot(GameState state, int excludeIndex)
+    {
+        foreach (var slot in state.Slots)
+        {
+            if (slot.Index == excludeIndex) continue;
+            if (slot.Unlocked && slot.DrinkId is not null && slot.Stock == 0)
+                return slot;
+        }
+
+        return null;
     }
 
     private static bool RollCrit(GameState state, Random rng)
@@ -186,8 +276,12 @@ public static class Simulation
         return crit;
     }
 
-    /// <summary>Round-robin scan from the cursor, so the machine empties evenly.</summary>
-    private static Slot? NextStockedSlot(GameState state)
+    /// <summary>
+    /// Round-robin scan from the cursor, so the machine empties evenly.
+    /// <paramref name="excludeIndex"/> skips the slot currently being served, which
+    /// is what a chain needs: the cursor has not moved off it yet.
+    /// </summary>
+    private static Slot? NextStockedSlot(GameState state, int excludeIndex = -1)
     {
         var count = state.Slots.Count;
         if (count == 0) return null;
@@ -196,6 +290,7 @@ public static class Simulation
         for (var i = 0; i < count; i++)
         {
             var slot = state.Slots[(start + i) % count];
+            if (slot.Index == excludeIndex) continue;
             if (slot.CanDispense) return slot;
         }
 

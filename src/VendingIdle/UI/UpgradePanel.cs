@@ -1,3 +1,4 @@
+using System;
 using Microsoft.Xna.Framework;
 using VendingIdle.Core;
 using VendingIdle.Render;
@@ -111,6 +112,11 @@ public static class UpgradePanel
 
         ui.StatRow(new Rectangle(body.X, y, body.Width, 16), "Bottles in stock",
                    $"{state.TotalStock} / {state.SlotsOwned * state.SlotCapacity}");
+        y += 17;
+
+        ui.StatRow(new Rectangle(body.X, y, body.Width, 16), "Crate tokens",
+                   $"{Money.Format(state.Tokens)} / {Money.Format((long)Math.Ceiling(state.NextPackCost))}",
+                   state.CanOpenPack ? Theme.Money : null);
         y += 22;
 
         ui.Separator(body.X, y, body.Width);
