@@ -102,6 +102,7 @@ dotnet run --project tools/VendingIdle.SimTest -- --curve  # progression report
 | Click the floating drink | Claim the crate roll |
 | Click an edge tab / `Q` / `E` | Slide the upgrades / slot menu in or out |
 | `Tab` | Send both menus away, or bring them back |
+| `M` / the speaker, top right | Mute or unmute all sound |
 | `R` | Restock everything |
 | `S` | Save |
 
@@ -130,7 +131,7 @@ and the rule that a slot needs one below it.
 | `--save <path>` | Use a different save file |
 | `--screenshot <path> --frames <n>` | Render n frames, write a PNG, exit |
 | `--drawers open\|left\|right` | Slide menus in on launch (default: both closed) |
-| `--mute` | Start silent (implied by `--screenshot`) |
+| `--mute` | Start silent for this run (implied by `--screenshot`); does not change the saved setting |
 | `--reveal` | Debug: grant tokens and open a crate on launch |
 
 `--screenshot` exists so the game can be smoke-tested headlessly:
@@ -210,10 +211,23 @@ of hiring the second customer. The shake's pitch wanders slightly on each play,
 because an idle game is hundreds of presses of the same button and the identical
 sample every time is what makes a good cue grating.
 
+Under the cues sits a looping music bed, well below them in the mix so it never
+competes with feedback the player needs to hear.
+
+The speaker in the top-right corner (or `M`) silences everything, and the choice
+is remembered in the save — a mute that forgets itself every launch is worse than
+no mute at all. Muting *pauses* the music rather than stopping it, so unmuting
+picks the loop up where it left off instead of restarting the same bars every
+time the button is tapped.
+
 Audio never takes the game down. A box with no audio device throws from the
-subsystem, so any failure mutes the rest of the session instead of propagating —
-silence beats a crash on a cosmetic. `--mute` starts silent, and `--screenshot`
-implies it.
+subsystem, so any failure disables the rest of the session instead of
+propagating — silence beats a crash on a cosmetic. That failure is tracked
+separately from the player's mute (`Available` vs `Muted`): unmuting must never
+resurrect a device that was never there. When audio is unavailable the button
+greys out rather than vanishing, because a corner that quietly loses its control
+is worse than one that plainly cannot work. `--mute` starts a single run silent
+without touching the saved setting, and `--screenshot` implies it.
 
 Every drink has its own voice without its own file. `DrinkDef.SoundPitch` shifts
 the one clink sample per drink — light drinks ring high, premium ones land heavy

@@ -121,8 +121,12 @@ public sealed class VendingGame : Game, ISimEvents
             Content.Load<SpriteFont>("Fonts/UiFontLarge"));
         _ui = new Ui(GraphicsDevice, _prims, _text);
 
-        if (_options.Muted) _sfx.Mute();
         _sfx.Load(Content);
+        _sfx.SetMuted(_options.Muted || _state.Muted);
+
+        // Starts the bed going. Safe while muted -- it begins paused, so the
+        // loop is already in position the moment the player turns sound on.
+        _sfx.StartMusic();
 
         // The clink is owned by the effect, not the click: a bottle sounds when
         // it actually lands, which is a few hundred milliseconds after the shake
@@ -235,6 +239,8 @@ public sealed class VendingGame : Game, ISimEvents
         if (WasPressed(keyboard, Keys.S))
             SaveSystem.Save(_state, _options.SavePath);
 
+        if (WasPressed(keyboard, Keys.M)) ToggleMute();
+
         if (WasPressed(keyboard, Keys.Q)) _upgradeDrawer.Toggle();
         if (WasPressed(keyboard, Keys.E)) _inspectorDrawer.Toggle();
 
@@ -247,6 +253,21 @@ public sealed class VendingGame : Game, ISimEvents
         }
 
         _prevKeyboard = keyboard;
+    }
+
+    /// <summary>
+    /// Flips the sound and remembers the choice. Unmuting plays a cue on the way
+    /// out: the music bed fades up under it, and without a click there is no
+    /// confirmation that anything happened.
+    /// </summary>
+    private void ToggleMute()
+    {
+        if (!_sfx.Available) return;
+
+        _sfx.ToggleMute();
+        _state.Muted = _sfx.Muted;
+
+        if (!_sfx.Muted) _sfx.Purchase();
     }
 
     private bool WasPressed(KeyboardState now, Keys key) =>
@@ -424,6 +445,11 @@ public sealed class VendingGame : Game, ISimEvents
         DrawHint();
 
         if (_offlineReport is not null) DrawOfflineToast(screen);
+
+        // Drawn last, so it stays on top of a drawer that has slid out under it.
+        // The corner belongs to the player, not to whichever menu is open.
+        var muteRect = new Rectangle(screen.Right - 46, 16, 30, 30);
+        if (_ui.MuteButton(muteRect, _sfx.Muted, _sfx.Available)) ToggleMute();
 
         _ui.DrawTooltip(screen);
         _ui.End();

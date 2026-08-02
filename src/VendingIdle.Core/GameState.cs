@@ -25,6 +25,15 @@ public sealed class GameState
     public double Money { get; set; }
     public double TotalEarned { get; set; }
 
+    /// <summary>
+    /// Sound silenced by the player. A setting rather than game state, but the
+    /// save file is the only thing this prototype persists, and a mute that
+    /// forgets itself every launch is worse than no mute at all. Absent from an
+    /// older save it deserialises to false, which is the right default anyway,
+    /// so this costs no save version.
+    /// </summary>
+    public bool Muted { get; set; }
+
     // ---- Supply crates ---------------------------------------------------
     /// <summary>Crate tokens, earned per bottle sold.</summary>
     public long Tokens { get; set; }

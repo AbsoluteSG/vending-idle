@@ -31,6 +31,12 @@ public sealed class Sfx
     /// </summary>
     private const int BottlesPerFrame = 3;
 
+    /// <summary>
+    /// The music bed sits below every cue. It is the one sound that is always
+    /// playing, so it has to stay out of the way of the ones that mean something.
+    /// </summary>
+    private const float MusicVolume = 0.22f;
+
     private readonly Random _rng = new();
 
     private SoundEffect? _shake;
@@ -38,16 +44,39 @@ public sealed class Sfx
     private SoundEffect? _purchase;
     private SoundEffect? _bottle;
 
+    private SoundEffect? _music;
+    private SoundEffectInstance? _musicInstance;
+
     private int _bottleBudget;
 
-    /// <summary>False once muted by request, or after the audio device has failed.</summary>
-    public bool Enabled { get; private set; } = true;
+    /// <summary>
+    /// False once the audio device or the content has failed. Distinct from
+    /// <see cref="Muted"/>: unmuting must never resurrect a device that is not
+    /// there, or every cue would throw again the moment the player toggles it.
+    /// </summary>
+    public bool Available { get; private set; } = true;
 
-    public void Mute() => Enabled = false;
+    /// <summary>Silenced by the player (or by <c>--mute</c>). Their choice, and reversible.</summary>
+    public bool Muted { get; private set; }
+
+    public bool Enabled => Available && !Muted;
+
+    public void SetMuted(bool muted)
+    {
+        if (Muted == muted) return;
+
+        Muted = muted;
+        ApplyMuteToMusic();
+    }
+
+    public void ToggleMute() => SetMuted(!Muted);
 
     public void Load(ContentManager content)
     {
-        if (!Enabled) return;
+        // Deliberately loads even while muted: the player can unmute at any
+        // moment, and a start-up flag must not decide what exists for the rest
+        // of the session.
+        if (!Available) return;
 
         try
         {
@@ -55,10 +84,52 @@ public sealed class Sfx
             _denied = content.Load<SoundEffect>("Audio/denied");
             _purchase = content.Load<SoundEffect>("Audio/purchase");
             _bottle = content.Load<SoundEffect>("Audio/bottle");
+
+            _music = content.Load<SoundEffect>("Audio/bgm");
+            _musicInstance = _music.CreateInstance();
+            _musicInstance.IsLooped = true;
+            _musicInstance.Volume = MusicVolume;
         }
         catch (Exception e) when (e is NoAudioHardwareException or ContentLoadException)
         {
-            Enabled = false;
+            Available = false;
+        }
+
+        ApplyMuteToMusic();
+    }
+
+    /// <summary>
+    /// Pauses rather than stops, so unmuting picks the loop up where it left off
+    /// instead of restarting the same eight bars every time the button is tapped.
+    /// </summary>
+    private void ApplyMuteToMusic()
+    {
+        if (!Available || _musicInstance is null) return;
+
+        try
+        {
+            if (Enabled) _musicInstance.Resume();
+            else _musicInstance.Pause();
+        }
+        catch (Exception e) when (e is NoAudioHardwareException or InstancePlayLimitException)
+        {
+            Available = false;
+        }
+    }
+
+    /// <summary>Starts the loop. Safe to call when muted -- it starts paused.</summary>
+    public void StartMusic()
+    {
+        if (!Available || _musicInstance is null) return;
+
+        try
+        {
+            _musicInstance.Play();
+            ApplyMuteToMusic();
+        }
+        catch (Exception e) when (e is NoAudioHardwareException or InstancePlayLimitException)
+        {
+            Available = false;
         }
     }
 
@@ -110,7 +181,7 @@ public sealed class Sfx
         {
             // Out of voices is transient and harmless; a missing device is not,
             // but neither is worth a crash. Stop trying either way.
-            Enabled = false;
+            Available = false;
         }
     }
 }

@@ -70,6 +70,83 @@ public sealed partial class Ui
         return true;
     }
 
+    /// <summary>
+    /// The audio toggle that lives in the top-right corner. Drawn from primitives
+    /// rather than a sprite: it is the only icon in the game, and one shape is not
+    /// worth a texture, an importer entry and a second thing to keep in sync.
+    /// </summary>
+    /// <param name="available">
+    /// False when there is no audio device at all. The button still draws -- a
+    /// corner that silently loses its control is worse than a dead one -- but it
+    /// greys out and reports the refusal rather than pretending to toggle.
+    /// </param>
+    public bool MuteButton(Rectangle rect, bool muted, bool available)
+    {
+        var hover = !ClickConsumed && Hovering(rect);
+        var held = hover && MouseDown;
+
+        var bg = !available ? Theme.ButtonDisabled
+               : held ? Theme.ButtonActive
+               : hover ? Theme.ButtonHover
+               : Theme.Panel;
+
+        P.FillRounded(Sb, rect, rect.Height / 2, bg);
+        P.OutlineRounded(Sb, rect, rect.Height / 2, Theme.PanelEdge);
+
+        var fg = !available ? Theme.TextFaint : muted ? Theme.TextDim : Theme.Text;
+        Speaker(rect, fg, muted || !available);
+
+        if (hover)
+            SetTooltip(available ? (muted ? "Sound off  (M)" : "Sound on  (M)")
+                                 : "No audio device", rect);
+
+        if (!hover || !MousePressed) return false;
+
+        ClickConsumed = true;
+
+        if (!available)
+        {
+            ClickDenied = true;
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// A speaker glyph centred in <paramref name="rect"/>: a box, a cone built
+    /// from columns, and either two waves or the slash that cancels them.
+    /// </summary>
+    private void Speaker(Rectangle rect, Color color, bool silenced)
+    {
+        var cx = rect.Center.X;
+        var cy = rect.Center.Y;
+
+        // Box, then the cone flaring out of it. Columns rather than a triangle
+        // primitive -- five of them read as a clean taper at this size.
+        P.Fill(Sb, new Rectangle(cx - 9, cy - 3, 4, 6), color);
+
+        for (var i = 0; i < 5; i++)
+        {
+            var h = 6 + i * 2;
+            P.Fill(Sb, new Rectangle(cx - 5 + i, cy - h / 2, 1, h), color);
+        }
+
+        if (silenced)
+        {
+            // A cross beside the cone, not a slash across it. At 30 px a slash
+            // runs straight through the cone and the glyph turns to mush; the
+            // cross keeps the speaker legible and still reads as "off".
+            var at = new Vector2(cx + 5, cy);
+            P.FillRotated(Sb, at, new Vector2(11f, 2f), MathHelper.PiOver4, color);
+            P.FillRotated(Sb, at, new Vector2(11f, 2f), -MathHelper.PiOver4, color);
+            return;
+        }
+
+        P.Fill(Sb, new Rectangle(cx + 1, cy - 4, 2, 8), color);
+        P.Fill(Sb, new Rectangle(cx + 5, cy - 7, 2, 14), color);
+    }
+
     /// <summary>A click target with no chrome of its own -- used for the machine and slots.</summary>
     public bool Hotspot(Rectangle rect, out bool hover)
     {
